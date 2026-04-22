@@ -1,0 +1,12 @@
+{
+  "name": "hack-ens-recovery",
+  "version": "1.0.0",
+  "private": true,
+  "scripts": {
+    "rescue": "bun run rescue.ts",
+    "simulate": "bun run simulate.ts"
+  },
+  "dependencies": {
+    "ethers": "^6.0.0"
+  }
+}
