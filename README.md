@@ -89,9 +89,42 @@ No single relay/builder builds 100% of Ethereum blocks. By submitting to Flashbo
 
 > **Note:** This tool works for **unwrapped** ENS names (BaseRegistrar owner = your wallet). If your name is wrapped in NameWrapper, the NFT owner is the NameWrapper contract — use a different approach.
 
-## Real recovery (2026-04-22)
+## After the ENS transfer — don't stop there
 
-This tool was built and used to recover `dinamic.eth` after the deployer wallet was compromised. The bundle landed on the first attempt after expanding to multiple builders. The sweeper ran at nonce 38 (after the ENS had already transferred at nonces 36–37).
+If the compromised wallet was also the **owner of your resolver contract**, you need a second bundle to fix it. The `setSigner()` and `transferOwnership()` functions on the resolver can only be called by the contract owner — same sweeper problem.
+
+**Second bundle (resolver fix):**
+
+```
+TX1  [throwaway wallet]   → fund compromised wallet
+TX2  [compromised wallet] → OffchainResolver.setSigner(newGatewaySigningKey)
+TX3  [compromised wallet] → OffchainResolver.transferOwnership(newSafeWallet)
+```
+
+Same throwaway, same approach. Budget another ~0.005 ETH on the throwaway. Then update your gateway's `GATEWAY_PRIVATE_KEY` and `ADMIN_WALLETS` env vars to the new keys.
+
+## Real incident (2026-04-22)
+
+`dinamic.eth` was running on a custom CCIP Read stack ([ens-dynamic-kit](https://github.com/Echo-Merlini/ens-dynamic-kit)). The deployer wallet was used as both the ENS name owner, the resolver contract owner, and the gateway signing key — a single key controlling everything. When it was compromised by a sweeper bot, the attacker had full access to all three layers.
+
+**Timeline:**
+
+1. Wallet compromise discovered — MetaMask sending ETH to an unknown address (actually just a normal gas fee, but triggered the investigation)
+2. Confirmed sweeper: any ETH sent to the wallet was drained within seconds
+3. Flashbots bundle built and submitted for 15 blocks → no inclusion (Flashbots alone covers ~40% of blocks)
+4. Resubmitted for 50 blocks → still no inclusion
+5. Expanded to Flashbots + beaverbuild + Titan for 100 blocks → **landed, ENS transferred**
+6. Sweeper ran at compromised wallet nonce 38 — the ENS was already gone (transferred at nonces 36–37, sweeper got nothing useful)
+7. Second Flashbots bundle: `setSigner` + `transferOwnership` on resolver contract → landed in seconds on first attempt
+8. Gateway restarted with new isolated signing key, `ADMIN_WALLETS` updated, done
+
+**Root causes found during recovery:**
+
+- Gateway signing key = deployer wallet (single key controlling everything — never do this)
+- CIDv1 contenthash encoding bug in the gateway: `0xe5 0x01` + UTF-8 text instead of `0xe3 0x01` + raw binary CID bytes — caused eth.limo to 500 before the incident was even noticed
+- DB persistence on Coolify image-based deployments: every redeploy wipes SQLite — requires manual `docker cp` backup/restore
+
+**What the sweeper got:** Nothing of value. The ENS name, resolver ownership, and all records were recovered. The compromised wallet itself is now empty and abandoned.
 
 ---
 
