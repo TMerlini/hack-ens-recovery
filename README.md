@@ -140,6 +140,8 @@ Because `output_address` is inside the hash, the receipt is **non-portable** —
 
 **The commit is the event — no central endpoint.** The kind-30078 event *is* the commitment; `agent-sdk`'s zero-dep scripts publish it to Nostr relays + OTS-anchor it (Bitcoin PoW precedence). Nothing routes through any service. It's read back via the mirrors `GET /ledger/{entry}/commitment` and `/ledger/{entry}/outcome` (so `verifyFullFlow()` and the ledger agree).
 
+**Single trust anchor.** `artifact_hash` and the commit event come from [`@onchain-ai/agent-sdk`](https://github.com/onchain-ai/agent-sdk) (`artifactHash` / `buildCommitEvent`), *not* a local copy — so the agent's hash and the escrow's `expect_artifact_hash` are byte-identical by construction (no two-implementations-drift). `judgment_type: "recovery_receipt"`, schema `onchain-ai.commit.v0`. The spec is normalized (addresses lowercased) before hashing so both sides feed `canonical()` the same input.
+
 **Anyone can verify, trusting no one:**
 - `bun run recompute.ts <job_id> <target_wallet> <output_address> <ens_label> [artifact_hash]` re-derives the binding from public data, offline.
 - Full validity (signature, invinoveritas issuance, Bitcoin-OTS precedence) via invinoveritas `/verify-proof` + [@onchain-ai/agent-sdk](https://github.com/onchain-ai)'s `verifyFullFlow()`.
