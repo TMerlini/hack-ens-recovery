@@ -23,28 +23,16 @@ forge install foundry-rs/forge-std   # restores lib/ (gitignored)
 forge test -vv
 ```
 
-## Open decisions — what's still missing
+## Design decisions
 
-**1. The receipt-validity leg (`IReceiptVerifier`) — the real open call, needs Fede.**
-The escrow can't itself check a BIP-340 schnorr signature over a Nostr event for free. Three implementations, decreasing trustlessness:
-- **A) On-chain BIP-340 verification** of the kind-30078 event signature → fully trustless, no oracle (purest fit for "nothing is a trusted oracle"; gas-heavy, needs a vetted secp256k1/BIP-340 Solidity lib).
-- **B) Attestor EIP-712** — `/verify-proof` co-signs `valid + match`, contract checks ECDSA → cheap, but re-introduces trust in Fede's verifier key. Viable v1 *with* a roadmap to A.
-- **C) Optimistic challenge window** — release after a delay unless someone submits a fraud proof → trust-minimized, adds latency + a challenge path.
-The contract is built so this is a drop-in: only the verifier changes.
+**Resolved with Fede (babyblueviper1), 2026-06-22:**
 
-**2. `artifact_hash` representation mismatch.**
-`expectArtifactHash` is a **SHA-256 over canonical JSON** from `agent-sdk` (`artifactHash(normalizeSpec(spec))`) — *not* `keccak256(abi.encode(...))`. The contract therefore treats it as an **opaque bytes32 commitment** (checks equality + delivery + nullifier; does not recompute). If we want the chain to *recompute* the binding, the SDK needs a parallel keccak/abi-encoded artifact id. Confirm with Fede which is canonical for on-chain use.
+1. **Verifier leg → A (on-chain BIP-340). Fede owns the impl.** `BIP340Verifier` does schnorr verify via the `ecrecover` trick (~3k gas, native precompile — no bespoke secp256k1 lib), recomputes the kind-30078 event id via the sha256 precompile, and checks `content.artifact_hash == expectArtifactHash`. An SDK helper packs `receiptProof` byte-aligned with off-chain `verifyFullFlow()`. **B (attestor EIP-712) rejected** — it makes the verifier key the release authority, re-introducing the trust this model deletes. **Fallback C (optimistic)** invokes the A verifier on its challenge path, so no trusted key in any case. Drops straight into the `IReceiptVerifier` seam.
+2. **`artifact_hash` → single SHA-256 canonical-JSON, opaque bytes32. No parallel keccak id.** A second canonicalization (TS sha256-over-JSON vs Solidity keccak-over-abi) would re-create the cross-language drift we removed by sharing `artifactHash(normalizeSpec(spec))`. The chain stays trustless without recomputing the spec: owner-binding via the on-chain delivery check, replay via the nullifier, and the A-path verify recomputes the *event id* (sha256) — keccak never needed.
+3. **Delivery scope → v1 single ERC-721** (`ownerOf(tokenId)`, matches `rescue.ts`). Wrapped names (NameWrapper/1155) and multi-asset sets are **separate jobs**, not a loop — one job ↔ one nullifier is cleaner. (`asset_set` is already inside `expectArtifactHash`, so the receipt commits to the full set regardless.)
+5. **Precedence stays off-chain.** commit-before-outcome ordering lives on `/ledger` via OTS→Bitcoin (`ots verify -d <event_id>`); pulling it on-chain buys nothing the relay+OTS record doesn't already give recomputably.
 
-**3. Delivery check scope.**
-v1 checks a single **ERC-721** `ownerOf(tokenId)` (matches `rescue.ts` — unwrapped `.eth` 2LD on the BaseRegistrar + `setOwner` on the registry). Still to decide:
-- **Wrapped names** (ENS NameWrapper, ERC-1155) — different ownership check.
-- **Multi-asset rescues** (`asset_set` can be funds + several NFTs) — v1 is one token; do we loop the set, or one job per asset?
-- **ERC-20 / native funds** delivery (balance deltas are racy — needs thought).
+**Remaining:**
 
-**4. Fee lifecycle gaps.**
-Has `openJob`/`release`/`refund(after expiry)`. Not yet: partial fees / fee splits, a protocol fee, dispute arbitration beyond the expiry refund, or cancel-before-commit. Confirm the commercial shape.
-
-**5. committed_at / precedence is intentionally off-chain.**
-The commit-before-outcome ordering (OTS / Bitcoin PoW via `ots verify -d`) is evidence on `/ledger`, not enforced in the contract. If we ever want on-chain precedence we'd anchor `committed_at` here too — currently out of scope by design.
-
-**6. Not done yet:** deploy script (`script/`), testnet deployment + address, gas profiling of option A, and wiring `release()` into the agent flow (`receipt.ts` → sign → `publishCommit` → escrow `release`).
+4. **Fee shape (commercial, ours).** Have `openJob`/`release`/`refund(after expiry)`. Not yet: fee splits, protocol fee, richer dispute path, cancel-before-commit. Nothing verifier-side blocks it.
+6. **To build:** Fede's `BIP340Verifier` (impl A) + SDK calldata helper; then our side: deploy script (`script/`), testnet deploy + address, and wiring `release()` into the agent flow (`receipt.ts` → sign → `publishCommit` → `release`).

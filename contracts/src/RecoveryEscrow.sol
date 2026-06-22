@@ -25,7 +25,9 @@ interface IERC721 {
 ///      JSON produced off-chain by the onchain-ai agent-sdk (artifactHash(normalizeSpec(spec))), NOT a
 ///      keccak/abi.encode value — so the contract does not (and cannot cheaply) recompute it. Its teeth
 ///      come from (a) the verifier confirming the signed receipt carries this exact hash, and (b) the
-///      independent on-chain ownerOf delivery check. See README "Open decisions" #2.
+///      independent on-chain ownerOf delivery check. Confirmed w/ Fede (2026-06-22): keep a SINGLE
+///      canonical sha256 hash end-to-end — deliberately NO parallel keccak/abi id (a second
+///      canonicalization would re-create the cross-language drift we just removed).
 contract RecoveryEscrow {
     enum Status {
         None,

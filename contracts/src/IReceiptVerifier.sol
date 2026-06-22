@@ -14,13 +14,17 @@ pragma solidity ^0.8.24;
 ///         independent ON-CHAIN delivery check + an unspent nullifier. The verifier surfaces
 ///         evidence; the teeth are on-chain.
 ///
-///         Implementations (pick one — the open call with Fede):
-///           A) On-chain BIP-340 verification of the event signature   → fully trustless, no oracle
-///              (purest fit for "nothing is a trusted oracle"; gas-heavy, needs a vetted secp256k1 lib).
-///           B) Attestor EIP-712 signature from /verify-proof           → cheap; re-introduces trust in
-///              the verifier key (acceptable v1 with a roadmap to A).
-///           C) Optimistic challenge window                            → release after delay unless a
-///              fraud proof is submitted; trust-minimized, adds latency.
+///         DECIDED (Fede / babyblueviper1, 2026-06-22): impl **A — on-chain BIP-340**, and Fede owns it.
+///           - `BIP340Verifier`: schnorr verify via the `ecrecover` trick (map `s·G = R + e·P` onto a
+///             single ecrecover, ~3k gas, native precompile — no bespoke secp256k1 lib), the kind-30078
+///             event id recomputed via the sha256 precompile, then `content.artifact_hash == expectArtifactHash`.
+///           - **B (attestor EIP-712) REJECTED** — it makes the verifier key the release authority, which
+///             re-introduces the exact trust this model deletes; shipping it in the flagship example would
+///             undercut the category where a skeptic reads the code.
+///           - Fallback is **C (optimistic challenge window)** — and its challenge path itself invokes the
+///             A verifier on demand, so there is NO trusted key in any path.
+///         An SDK helper packs `receiptProof` in the exact calldata layout this verifier expects, byte-aligned
+///         with off-chain `verifyFullFlow()` (same anti-drift discipline as `normalizeSpec`).
 interface IReceiptVerifier {
     /// @param expectArtifactHash  the job's bound spec hash H(job_id, target_wallet, output_address, asset_set).
     /// @param receiptProof        opaque, implementation-defined (raw event + sig, or an attestation, etc.).
