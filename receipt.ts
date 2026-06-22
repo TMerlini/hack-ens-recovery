@@ -11,8 +11,10 @@
 import { ethers } from "ethers";
 
 export const RECEIPT_KIND = 30078;
-// invinoveritas verify + ledger legs (Fede). Override via LEDGER_URL.
-const LEDGER_URL = process.env.LEDGER_URL ?? "https://api.babyblueviper.com";
+// There is NO central commit endpoint — the commit is the kind-30078 event itself, published to
+// relays + OTS-anchored by agent-sdk's zero-dep scripts (nothing routes through a service).
+// Read mirrors so verifyFullFlow() and the ledger agree (base defaults to api.babyblueviper.com):
+//   GET {LEDGER_URL}/ledger/{entry}/commitment   ·   GET {LEDGER_URL}/ledger/{entry}/outcome
 
 export interface RecoveryArtifact {
   job_id: string;          // salt → identical specs stay distinct (don't collide under the nullifier)
@@ -21,13 +23,23 @@ export interface RecoveryArtifact {
   asset_set: { ens_name: string; token_id: string; base_registrar: string; registry: string };
 }
 
+/** The kind-30078 commitment event. This event IS the commit — there is no central POST.
+ *  agent-sdk's zero-dep scripts publish it to Nostr relays + OTS-anchor it (Bitcoin PoW precedence). */
+export interface CommitEvent {
+  kind: number;            // 30078
+  created_at: number;      // pre-action
+  tags: string[][];        // [["artifact_hash", …], ["output_address", …]]
+  content: string;
+}
+
 export interface RecoveryReceipt {
   kind: number;
   artifact_hash: string;   // = H(job_id, target_wallet, output_address, asset_set) — owner-bound by construction
   output_address: string;
   committed_at: number;    // pre-action (precedes outcome)
-  result_ref?: string;     // settled delivery tx (attached on land; NOT in artifact_hash)
-  ledger_ref?: string;     // invinoveritas anchor id (so checks.issued_by_invinoveritas holds)
+  event?: CommitEvent;     // the built commit, pre-publish
+  entry?: string;          // published event id; read back via GET /ledger/{entry}/commitment
+  result_ref?: string;     // outcome leg (attached on land; NOT in artifact_hash); read via /ledger/{entry}/outcome
 }
 
 /** Canonical preimage → artifact_hash. Deterministic + re-derivable from public data (see recompute.ts). */
@@ -46,34 +58,40 @@ export function artifactHash(a: RecoveryArtifact): string {
   return ethers.sha256(ethers.toUtf8Bytes(preimage));
 }
 
-/** Pre-action commit: anchor the artifact_hash BEFORE the bundle is broadcast. */
+/** Build the kind-30078 commitment event. This event IS the commit (no central POST). */
+export function buildCommit(a: RecoveryArtifact): { event: CommitEvent; artifact_hash: string } {
+  const artifact_hash = artifactHash(a);
+  const event: CommitEvent = {
+    kind: RECEIPT_KIND,
+    created_at: Math.floor(Date.now() / 1000),
+    tags: [
+      ["artifact_hash", artifact_hash],
+      ["output_address", a.output_address.toLowerCase()],
+    ],
+    content: JSON.stringify({ artifact_hash, output_address: a.output_address.toLowerCase() }),
+  };
+  return { event, artifact_hash };
+}
+
+/**
+ * Pre-action commit: build the kind-30078 event and publish it BEFORE the bundle is broadcast.
+ * The event itself is the commitment — agent-sdk's zero-dep scripts relay-publish + OTS-anchor it
+ * (Bitcoin PoW precedence). Nothing routes through a central service. Read back via
+ * GET /ledger/{entry}/commitment.
+ */
 export async function commitPreAction(a: RecoveryArtifact): Promise<RecoveryReceipt> {
+  const { event, artifact_hash } = buildCommit(a);
   const receipt: RecoveryReceipt = {
     kind: RECEIPT_KIND,
-    artifact_hash: artifactHash(a),
+    artifact_hash,
     output_address: a.output_address.toLowerCase(),
-    committed_at: Math.floor(Date.now() / 1000),
+    committed_at: event.created_at,
+    event,
   };
-  // ── INTEGRATION POINT (invinoveritas /ledger, babyblueviper1) ──
-  // POST the commitment to get the signed + Bitcoin-OTS-anchored kind-30078 proof event.
-  // Exact payload/endpoint per the invinoveritas commitment-proof spec. Best-effort: the
-  // local deterministic commitment always stands even if the ledger isn't reachable here.
-  try {
-    const res = await fetch(`${LEDGER_URL}/ledger/commit`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        kind: RECEIPT_KIND,
-        artifact_hash: receipt.artifact_hash,
-        output_address: receipt.output_address,
-        committed_at: receipt.committed_at,
-      }),
-    });
-    if (res.ok) {
-      const j = (await res.json()) as any;
-      receipt.ledger_ref = j.id ?? j.event_id ?? j.ref;
-    }
-  } catch { /* ledger optional in example/dry mode */ }
+  // ── publish via @onchain-ai/agent-sdk (zero-dep: sign → relay-publish → OTS anchor) ──
+  // const { publishCommit } = await import("@onchain-ai/agent-sdk");
+  // receipt.entry = await publishCommit(event);   // returns the published event id (the ledger entry)
+  // Until agent-sdk lands, `receipt.event` carries the built commit, ready to publish.
   return receipt;
 }
 

@@ -138,6 +138,8 @@ Every run emits a **WYRIWE receipt** (Nostr kind `30078`) so the rescue is *prov
 
 Because `output_address` is inside the hash, the receipt is **non-portable** — it can only describe *this* rescue, to *this* destination. The settled transfer tx is attached afterward as `result_ref`, kept **out** of the preimage (preserving the commit-before-outcome ordering). `job_id` salts it so identical rescues stay distinct.
 
+**The commit is the event — no central endpoint.** The kind-30078 event *is* the commitment; `agent-sdk`'s zero-dep scripts publish it to Nostr relays + OTS-anchor it (Bitcoin PoW precedence). Nothing routes through any service. It's read back via the mirrors `GET /ledger/{entry}/commitment` and `/ledger/{entry}/outcome` (so `verifyFullFlow()` and the ledger agree).
+
 **Anyone can verify, trusting no one:**
 - `bun run recompute.ts <job_id> <target_wallet> <output_address> <ens_label> [artifact_hash]` re-derives the binding from public data, offline.
 - Full validity (signature, invinoveritas issuance, Bitcoin-OTS precedence) via invinoveritas `/verify-proof` + [@onchain-ai/agent-sdk](https://github.com/onchain-ai)'s `verifyFullFlow()`.

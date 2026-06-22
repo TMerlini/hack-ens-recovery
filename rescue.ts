@@ -182,7 +182,7 @@ const artifact: RecoveryArtifact = {
 const receipt = await commitPreAction(artifact);
 console.log(`\n  📜 Receipt committed (kind ${receipt.kind})`);
 console.log(`     artifact_hash: ${receipt.artifact_hash}`);
-console.log(`     job_id: ${artifact.job_id}${receipt.ledger_ref ? ` | ledger: ${receipt.ledger_ref}` : " | ledger: (not anchored in this run)"}`);
+console.log(`     job_id: ${artifact.job_id}${receipt.entry ? ` | entry: ${receipt.entry}` : " | commit built (publish via agent-sdk: relay + OTS)"}`);
 
 // Submit to all builders for BLOCKS consecutive blocks
 console.log(`\n  Submitting to ${BUILDERS.length} builders × ${BLOCKS} blocks...`);
