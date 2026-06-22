@@ -55,4 +55,7 @@ commitPreAction(artifact)         // build UNSIGNED kind-30078 (binds output_add
 **Remaining:**
 
 4. **Fee shape (commercial, ours).** Have `openJob`/`release`/`refund(after expiry)`. Not yet: fee splits, protocol fee, richer dispute path, cancel-before-commit. Nothing verifier-side blocks it.
-6. **Done:** `BIP340Verifier` (impl A) + SDK `packReceiptProof()` + deploy script + agent-side `buildReceiptProof()` wiring. **Left:** `issuerPubkeyX` policy confirm (agent key vs invinoveritas — Fede), **independent audit of `BIP340.sol`**, testnet deploy + address, end-to-end run on a live receipt.
+7. **`issuerPubkeyX` → the recovery agent's x-only key** (`AGENT_PUBKEY`/`buildCommitEvent`), confirmed w/ Fede. The agent signs its own commit; invinoveritas does not re-issue or co-sign — pinning their key would re-insert a trusted issuer in the path. So `valid ⟺ signed by the accountable recovery agent`, the semantic that makes commit-before-outcome precedence meaningful. Owner-binding stays on the delivery check + nullifier (key-independent).
+6. **Done:** `BIP340Verifier` (impl A) + SDK `packReceiptProof()` + deploy script + agent-side `buildReceiptProof()` wiring + issuer policy. **Left:** **independent audit of `BIP340.sol`**, testnet deploy + address, end-to-end run on a live receipt.
+
+**Future (post-v1, not a v1 change):** a single pinned key binds one escrow to one agent. For multiple recovery agents against one escrow, generalize to either (a) an issuer **allowlist** in the verifier, or (b) an **ERC-8004 Validation-Registry** lookup instead of the hardcoded pin.
