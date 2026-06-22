@@ -13,6 +13,7 @@ import {
   buildCommitEvent,
   normalizeSpec as sdkNormalizeSpec,
   publishCommit as sdkPublishCommit,
+  packReceiptProof as sdkPackReceiptProof,
   relayPublish,
   PROOF_KIND,
   type PublishResult,
@@ -107,4 +108,26 @@ export async function publishCommit(
     otsStamp: opts.otsStamp,
     requireSig: true,
   });
+}
+
+/**
+ * buildReceiptProof — pack the SIGNED kind-30078 commit into the `receiptProof` bytes that
+ * `RecoveryEscrow.release(expectArtifactHash, receiptProof)` forwards to `BIP340Verifier.verify()`.
+ *
+ * Same anti-drift discipline as `normalizeSpec`: the SDK's `packReceiptProof()` lays out
+ * `abi.encode(px, rx, s, preimage)` exactly as the on-chain verifier decodes it, so off-chain
+ * `verifyFullFlow()` and on-chain `verify()` consume byte-identical input. The event must be signed
+ * (the contract checks the BIP-340 sig over `sha256(preimage)`); `commitPreAction` returns it UNSIGNED.
+ *
+ * Release flow: commitPreAction → sign → publishCommit (anchor) → buildReceiptProof → submit to
+ * escrow.release(receipt.artifact_hash, proof). Owner-binding + delivery + nullifier are enforced on-chain.
+ */
+export function buildReceiptProof(receipt: RecoveryReceipt): string {
+  if (!receipt.event) {
+    throw new Error("buildReceiptProof: receipt has no commit event — run commitPreAction with AGENT_PUBKEY first.");
+  }
+  if (!receipt.event.sig) {
+    throw new Error("buildReceiptProof: event is unsigned — sign the kind-30078 event before packing (the contract verifies the signature).");
+  }
+  return sdkPackReceiptProof(receipt.event);
 }

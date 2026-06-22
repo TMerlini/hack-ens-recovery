@@ -7,7 +7,7 @@
     "simulate": "bun run simulate.ts"
   },
   "dependencies": {
-    "@onchain-ai/agent-sdk": "github:onchain-ai/agent-sdk#373a15301f1a7e747d537783d07a6d447b36d7bd",
+    "@onchain-ai/agent-sdk": "github:onchain-ai/agent-sdk#02971d1f8ceafa0ab71611cec99ace1cbc67a6b8",
     "ethers": "^6.0.0"
   }
 }

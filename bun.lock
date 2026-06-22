@@ -5,7 +5,7 @@
     "": {
       "name": "hack-ens-recovery",
       "dependencies": {
-        "@onchain-ai/agent-sdk": "github:onchain-ai/agent-sdk#373a15301f1a7e747d537783d07a6d447b36d7bd",
+        "@onchain-ai/agent-sdk": "github:onchain-ai/agent-sdk#02971d1f8ceafa0ab71611cec99ace1cbc67a6b8",
         "ethers": "^6.0.0",
       },
     },
@@ -17,7 +17,7 @@
 
     "@noble/hashes": ["@noble/hashes@1.8.0", "", {}, "sha512-jCs9ldd7NwzpgXDIf6P3+NrHh9/sD6CQdxHyjQI+h/6rDNo88ypBxxz45UDuZHz9r3tNz7N/VInSVoVdtXEI4A=="],
 
-    "@onchain-ai/agent-sdk": ["@onchain-ai/agent-sdk@github:onchain-ai/agent-sdk#373a153", { "dependencies": { "@noble/curves": "1.9.7", "@noble/hashes": "1.8.0" } }, "onchain-ai-agent-sdk-373a153", "sha512-28hvfPodpFuVMfgBp1ALhUx0+X8HTAH0VHamJ1QDe848dhz6JafzKm2M20qxlkrI4i517AOM9Gw4TdMbETdspA=="],
+    "@onchain-ai/agent-sdk": ["@onchain-ai/agent-sdk@github:onchain-ai/agent-sdk#02971d1", { "dependencies": { "@noble/curves": "1.9.7", "@noble/hashes": "1.8.0" } }, "onchain-ai-agent-sdk-02971d1", "sha512-kGoqDmwavp9UGKGYZzeF8TZ5sYZumpfEkiPh3dRGxzT2hCkL3vSY0kc6uV+SiOGB7USqk88QMkKKtYoWsBu7Sw=="],
 
     "@types/node": ["@types/node@22.7.5", "", { "dependencies": { "undici-types": "~6.19.2" } }, "sha512-jML7s2NAzMWc//QSJ1a3prpk78cOPchGvXJsC3C6R6PSMoooztvRVQEz89gmBTBY1SPMaqo5teB4uNHPdetShQ=="],
 
