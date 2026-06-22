@@ -2,6 +2,12 @@
 
 A Flashbots atomic bundle tool to rescue an ENS domain (`.eth`) from a wallet controlled by a sweeper bot — without losing the domain to the attacker.
 
+> **Recompute / verify (one rule):** every rescue emits a WYRIWE receipt (kind `30078`) binding the rescue to its owner-specified destination — checkable two ways, trusting neither the agent nor us:
+> - **off-chain** — re-derive the binding from public data: `bun run recompute.ts <job_id> <target_wallet> <output_address> <ens_label> [artifact_hash]`; full receipt via [@onchain-ai/agent-sdk] `verifyFullFlow()` / invinoveritas `/verify-proof`.
+> - **on-chain (no oracle)** — the receipt verifies inside the escrow's `BIP340Verifier` (secp256k1 Schnorr via the `ecrecover` trick): `cd contracts && forge test` (incl. all 15 official BIP-340 vectors). Live on Sepolia ([deployments](contracts/deployments.md)); release gates on `valid ∧ artifact_hash_matches ∧ on-chain delivery`, with a replay nullifier.
+>
+> See [Verifiable receipt](#verifiable-receipt-wyriwe) · the on-chain stack lives in [`contracts/`](contracts/).
+
 ## The Attack
 
 A **sweeper bot** is malware that monitors a compromised wallet's incoming transactions. The moment any ETH lands in the wallet, it instantly submits a sweep transaction with a high gas price, draining the ETH before you can do anything with it.
@@ -125,6 +131,28 @@ Same throwaway, same approach. Budget another ~0.005 ETH on the throwaway. Then 
 - DB persistence on Coolify image-based deployments: every redeploy wipes SQLite — requires manual `docker cp` backup/restore
 
 **What the sweeper got:** Nothing of value. The ENS name, resolver ownership, and all records were recovered. The compromised wallet itself is now empty and abandoned.
+
+## Verifiable receipt (WYRIWE)
+
+Every run emits a **WYRIWE receipt** (Nostr kind `30078`) so the rescue is *provable*, not just claimed — and **owner-bound by construction**.
+
+**Commit-before-outcome.** Before the bundle is broadcast, `rescue.ts` commits an `artifact_hash`:
+
+    artifact_hash = H(job_id, target_wallet, output_address, asset_set)
+
+Because `output_address` is inside the hash, the receipt is **non-portable** — it can only describe *this* rescue, to *this* destination. The settled transfer tx is attached afterward as `result_ref`, kept **out** of the preimage (preserving the commit-before-outcome ordering). `job_id` salts it so identical rescues stay distinct.
+
+**The commit is the event — no central endpoint.** The kind-30078 event *is* the commitment; `agent-sdk`'s zero-dep scripts publish it to Nostr relays + OTS-anchor it (Bitcoin PoW precedence). Nothing routes through any service. It's read back via the mirrors `GET /ledger/{entry}/commitment` and `/ledger/{entry}/outcome` (so `verifyFullFlow()` and the ledger agree).
+
+**Single trust anchor.** `artifact_hash` and the commit event come from [`@onchain-ai/agent-sdk`](https://github.com/onchain-ai/agent-sdk) (`artifactHash` / `buildCommitEvent`), *not* a local copy — so the agent's hash and the escrow's `expect_artifact_hash` are byte-identical by construction (no two-implementations-drift). `judgment_type: "recovery_receipt"`, schema `onchain-ai.commit.v0`. The spec is normalized (addresses lowercased) before hashing so both sides feed `canonical()` the same input.
+
+**Anyone can verify, trusting no one:**
+- `bun run recompute.ts <job_id> <target_wallet> <output_address> <ens_label> [artifact_hash]` re-derives the binding from public data, offline.
+- Full validity (signature, invinoveritas issuance, Bitcoin-OTS precedence) via invinoveritas `/verify-proof` + [@onchain-ai/agent-sdk](https://github.com/onchain-ai)'s `verifyFullFlow()`.
+
+**Escrow gate (for the paid a2a service) — never `valid` alone:** release on `valid === true` **AND** `checks.artifact_hash_matches === true` **AND** on-chain delivery (the asset actually landed at `output_address`); the escrow nullifies the `artifact_hash` on release so a receipt can't be replayed.
+
+Reference flow + locked spec: https://gist.github.com/TMerlini/98b7dbeb221024b617b36c7e3b79e695
 
 ---
 

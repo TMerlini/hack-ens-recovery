@@ -4,9 +4,12 @@
   "private": true,
   "scripts": {
     "rescue": "bun run rescue.ts",
-    "simulate": "bun run simulate.ts"
+    "simulate": "bun run simulate.ts",
+    "run-live": "bun run run-live.ts"
   },
   "dependencies": {
+    "@noble/curves": "^1.9.7",
+    "@onchain-ai/agent-sdk": "github:onchain-ai/agent-sdk#02971d1f8ceafa0ab71611cec99ace1cbc67a6b8",
     "ethers": "^6.0.0"
   }
 }
