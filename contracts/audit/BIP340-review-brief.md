@@ -50,7 +50,12 @@ even-Y point) and compares. Equality ⟺ valid.
   first-occurrence scan can't be steered by issuer-side content shape; consider a stricter parse if the
   content schema grows.
 
-## Test coverage present (24/24 green)
+## Test coverage present (25/25 green)
+- `BIP340Vectors.t.sol` (1): **all 15 official BIP-340 verification vectors** (bitcoin/bips
+  `test-vectors.csv`, the 32-byte-message set) — incl. every invalid case: not-on-curve pubkey, odd-Y R,
+  negated message, negated s, infinite `sG−eP`, `rx` not a curve x, sig fields ≥ field/order, pubkey ≥
+  field size. All match the spec's expected accept/reject. (Variable-length-message vectors 15–18 are out
+  of scope — `verify` takes a fixed 32-byte message.)
 - `BIP340.t.sol` (7): real noble-curves vector verifies; wrong msg / wrong pubkey / tampered r / tampered
   s / zero inputs / `s ≥ n` all rejected.
 - `BIP340Verifier.t.sol` (6): real SDK-signed receipt — valid+match, wrong-expect, wrong-issuer-pin,
@@ -59,8 +64,8 @@ even-Y point) and compares. Equality ⟺ valid.
   fee-release demo, release tx in block 11118096; replay reverts (nullifier). See `../deployments.md`.
 
 ## Recommended hardening (suggested additions)
-1. **Official BIP-340 test vectors** — wire the BIP's `test-vectors.csv` as on-chain assertions, especially
-   the *invalid* cases (y not a square, `x ≥ p`, `s ≥ n`, malleability). Highest-value addition.
+1. ✅ **Official BIP-340 test vectors** — DONE. All 15 verification vectors (incl. invalid: y not a square,
+   `x ≥ p`, `s ≥ n`, malleability, infinite point) wired in `BIP340Vectors.t.sol`, all match the spec.
 2. **Fuzz** — random sk/msg: `sign → verify` true; single-bit flip → false.
 3. **Diff** against a reference ecrecover-Schnorr implementation.
 4. **Gas** — confirm ~7.5k/verify holds under worst-case `preimage` length in `BIP340Verifier`.
