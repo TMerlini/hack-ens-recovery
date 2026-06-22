@@ -8,11 +8,24 @@ crypto-critical file in the recovery-escrow stack.
 - **Effort:** small + bounded — `ecrecover`-trick for `sG = R + eP`, an even-Y point lift via the `modexp`
   precompile, and the domain-check surface. No external deps, no assembly beyond the precompile call.
 - **Why:** it's the `valid` leg of an owner-bound escrow's release gate. A false-accept undermines the
-  whole "verify trusting no one" design. This review is the **last gate before mainnet**.
+  whole "verify trusting no one" design.
 - **Status:** 25/25 foundry tests green incl. all 15 official BIP-340 vectors; deployed + run end-to-end
   on Sepolia. We're not asking you to find missing tests — we're asking for human crypto eyes on the math.
 - **Author:** `BIP340.sol` written by **@babyblueviper1**, who is explicitly *not* self-reviewing — hence
-  this independent request. Bounty available (terms below).
+  this independent request.
+
+## Assurance tiers (labeled straight)
+We don't oversell where this stands. Two tiers, distinct:
+- **Tier 1 — interim (now):** a **cred-based public-good review** by a best-matched independent reviewer
+  (the on-chain-Schnorr / `ecrecover`-trick crowd — crysol/verklegarden, a Chronicle-Schnorr reviewer,
+  Witnet's EC folks) **+ a reference-impl cross-check** (benchmark vs Chronicle `Schnorr.sol` + `crysol`).
+  Strong interim assurance + a citeable name. **This is what we're sourcing now.** No money flows on mainnet
+  yet, so nothing rides on it beyond the testnet reference + the onchain-ai example.
+- **Tier 2 — formal (the real mainnet gate):** a **grant-funded** spot audit (ENS ecosystem / EF ESP — it's
+  an ENS recovery tool). Required **before any mainnet value flows**, not before.
+
+`BIP340.sol` stays flagged **pre-mainnet-audit** until Tier 2 lands. A Tier-1 pass does not lift that flag —
+it strengthens confidence and gives a reference cross-check.
 
 ## What to review
 | | file | role |
@@ -56,5 +69,7 @@ can't be used as the ecrecover `r` → pin a normal key. Please confirm acceptab
 
 ## Logistics
 - **Repo access:** public — `https://github.com/TMerlini/hack-ens-recovery` (PR [#1](https://github.com/TMerlini/hack-ens-recovery/pull/1)).
-- **Bounty:** available — amount/terms TBD with the reviewer (it's ~120 lines; we're after a tight, fast pass).
+- **Engagement:** Tier 1 is a cred-based public-good review (not a paid bounty) — a fast, citeable pass on
+  ~120 lines, with a reference cross-check you'd likely run anyway. Tier 2 (formal, grant-funded) comes only
+  when mainnet value is on the horizon; happy to co-write the ENS/EF-ESP grant then.
 - **Contact:** GitHub [@babyblueviper1](https://github.com/babyblueviper1) (author) · [@TMerlini](https://github.com/TMerlini) (escrow/integration). Comment on PR #1 or reach out directly.
