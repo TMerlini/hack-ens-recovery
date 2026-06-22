@@ -2,7 +2,11 @@
 
 A Flashbots atomic bundle tool to rescue an ENS domain (`.eth`) from a wallet controlled by a sweeper bot — without losing the domain to the attacker.
 
-> **Recompute / verify (one rule):** every rescue emits a WYRIWE receipt (kind `30078`) binding the rescue to its owner-specified destination. Anyone can re-derive the binding from public data — `bun run recompute.ts <job_id> <target_wallet> <output_address> <ens_label> [artifact_hash]` — and verify the full receipt via [@onchain-ai/agent-sdk] / invinoveritas `/verify-proof`. The claim is checkable without trusting the agent or us. See [Verifiable receipt](#verifiable-receipt-wyriwe).
+> **Recompute / verify (one rule):** every rescue emits a WYRIWE receipt (kind `30078`) binding the rescue to its owner-specified destination — checkable two ways, trusting neither the agent nor us:
+> - **off-chain** — re-derive the binding from public data: `bun run recompute.ts <job_id> <target_wallet> <output_address> <ens_label> [artifact_hash]`; full receipt via [@onchain-ai/agent-sdk] `verifyFullFlow()` / invinoveritas `/verify-proof`.
+> - **on-chain (no oracle)** — the receipt verifies inside the escrow's `BIP340Verifier` (secp256k1 Schnorr via the `ecrecover` trick): `cd contracts && forge test` (incl. all 15 official BIP-340 vectors). Live on Sepolia ([deployments](contracts/deployments.md)); release gates on `valid ∧ artifact_hash_matches ∧ on-chain delivery`, with a replay nullifier.
+>
+> See [Verifiable receipt](#verifiable-receipt-wyriwe) · the on-chain stack lives in [`contracts/`](contracts/).
 
 ## The Attack
 
