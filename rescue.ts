@@ -6,6 +6,7 @@
  */
 
 import { ethers } from "ethers";
+import { commitPreAction, finalize, type RecoveryArtifact } from "./receipt";
 
 // ─── Config ──────────────────────────────────────────────────────────────────
 const COMPROMISED_KEY = process.env.COMPROMISED_KEY ?? "";
@@ -171,6 +172,18 @@ const txs = [tx1, tx2, tx3];
 console.log("\n  Simulating bundle on Flashbots...");
 await simulate(txs, block);
 
+// ─── WYRIWE pre-action commit (BEFORE broadcast → commit-before-outcome) ─────
+const artifact: RecoveryArtifact = {
+  job_id: process.env.JOB_ID ?? ethers.hexlify(ethers.randomBytes(8)),
+  target_wallet: compromised.address,
+  output_address: NEW_WALLET,
+  asset_set: { ens_name: ensName, token_id: tokenId.toString(), base_registrar: BASE_REGISTRAR, registry: ENS_REGISTRY },
+};
+const receipt = await commitPreAction(artifact);
+console.log(`\n  📜 Receipt committed (kind ${receipt.kind})`);
+console.log(`     artifact_hash: ${receipt.artifact_hash}`);
+console.log(`     job_id: ${artifact.job_id}${receipt.ledger_ref ? ` | ledger: ${receipt.ledger_ref}` : " | ledger: (not anchored in this run)"}`);
+
 // Submit to all builders for BLOCKS consecutive blocks
 console.log(`\n  Submitting to ${BUILDERS.length} builders × ${BLOCKS} blocks...`);
 const submitted: Record<string, number> = {};
@@ -194,6 +207,9 @@ while (true) {
   if (owner.toLowerCase() === NEW_WALLET.toLowerCase()) {
     console.log(`\n  ✅ SUCCESS at block ${current}!`);
     console.log(`  ${ensName} → ${NEW_WALLET}`);
+    const settled = finalize(receipt, ethers.keccak256(tx2)); // transferFrom tx = on-chain delivery
+    console.log("\n  📜 Receipt finalized — ready for verifyFullFlow():");
+    console.log("  " + JSON.stringify(settled));
     break;
   }
   console.log(`  [${ts}] block ${current}/${deadline} | owner: ${owner}`);
