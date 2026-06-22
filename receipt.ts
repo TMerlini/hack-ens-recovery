@@ -8,7 +8,15 @@
  *
  * Spec (locked w/ babyblueviper1): https://gist.github.com/TMerlini/98b7dbeb221024b617b36c7e3b79e695
  */
-import { artifactHash as sdkArtifactHash, buildCommitEvent, PROOF_KIND } from "@onchain-ai/agent-sdk";
+import {
+  artifactHash as sdkArtifactHash,
+  buildCommitEvent,
+  normalizeSpec as sdkNormalizeSpec,
+  publishCommit as sdkPublishCommit,
+  relayPublish,
+  PROOF_KIND,
+  type PublishResult,
+} from "@onchain-ai/agent-sdk";
 
 export const JUDGMENT_TYPE = "recovery_receipt";
 export const SCHEMA = "onchain-ai.commit.v0";
@@ -21,22 +29,14 @@ export interface RecoveryArtifact {
 }
 
 /**
- * Normalize the spec so caller + escrow hash IDENTICAL input. The SDK's canonical() sorts keys
- * (recursive) and is case-sensitive on purpose, so we only lowercase the case-significant address
- * fields here. (Interim — switch to the SDK's `normalizeSpec` convention the moment it ships.)
+ * Normalize the spec so caller + escrow hash IDENTICAL input. Delegates to the SDK's `normalizeSpec`
+ * — the single anti-drift point (recursively lowercases EVM-address-shaped strings, leaves
+ * case-significant fields like ens_name/token_id/job_id untouched). The escrow calls the SAME SDK
+ * function, so `artifact_hash` is byte-identical on both sides by construction. (SDK's canonical()
+ * sorts keys recursively, so field order here is irrelevant.)
  */
-export function normalizeSpec(a: RecoveryArtifact) {
-  return {
-    job_id: a.job_id,
-    target_wallet: a.target_wallet.toLowerCase(),
-    output_address: a.output_address.toLowerCase(),
-    asset_set: {
-      ens_name: a.asset_set.ens_name,
-      token_id: a.asset_set.token_id,
-      base_registrar: a.asset_set.base_registrar.toLowerCase(),
-      registry: a.asset_set.registry.toLowerCase(),
-    },
-  };
+export function normalizeSpec(a: RecoveryArtifact): RecoveryArtifact {
+  return sdkNormalizeSpec(a);
 }
 
 /** artifact_hash via the SDK over the normalized spec — the same value the escrow holds as expect_artifact_hash. */
@@ -75,12 +75,36 @@ export function finalize(receipt: RecoveryReceipt, result_ref: string): Recovery
   return { ...receipt, result_ref };
 }
 
+/** Public Nostr relays for the commit-publication leg. Override with NOSTR_RELAYS (comma-separated). */
+const DEFAULT_RELAYS = (process.env.NOSTR_RELAYS ?? "wss://relay.damus.io,wss://nos.lol,wss://relay.primal.net")
+  .split(",").map((s) => s.trim()).filter(Boolean);
+
 /**
- * publishCommit — sign + relay-publish + OTS-anchor the commit event. Stub until the SDK ships its
- * `publishCommit()` (relay + OTS) helper; until then `commitPreAction` returns the built event ready
- * to publish. Verification is the SDK's `verifyFullFlow` (gate: valid && artifact_hash_matches &&
- * anchored; the escrow ALSO checks on-chain delivery + nullifies the artifact).
+ * publishCommit — anchor the SIGNED kind-30078 commit to public sources: relay-publish (third-party
+ * copies + published_at) + OTS-to-Bitcoin (PoW precedence). Thin wrapper over the SDK's
+ * `publishCommit()` (injected I/O, NEVER signs): default `relayPublish` for the relay leg; the OTS leg
+ * is injected because it needs the `ots` calendar I/O (not bundled). Pass `otsStamp` to enable it —
+ * recompute later with `ots verify -d <event_id>`.
+ *
+ * The event must already be signed by your own key mgmt (`commitPreAction` returns it UNSIGNED — sign
+ * it, set `receipt.event.sig`, then publish). Verification stays the SDK's `verifyFullFlow` (gate:
+ * valid && artifact_hash_matches && anchored); the escrow ALSO checks on-chain delivery + nullifies.
  */
-export async function publishCommit(_receipt: RecoveryReceipt): Promise<never> {
-  throw new Error("publishCommit: pending @onchain-ai/agent-sdk relay+OTS helper. See gist 98b7dbeb.");
+export async function publishCommit(
+  receipt: RecoveryReceipt,
+  opts: { relays?: string[]; otsStamp?: (eventId: string) => Promise<unknown> } = {},
+): Promise<PublishResult> {
+  if (!receipt.event) {
+    throw new Error("publishCommit: receipt has no commit event — run commitPreAction with AGENT_PUBKEY first.");
+  }
+  if (!receipt.event.sig) {
+    throw new Error("publishCommit: event is unsigned — sign the kind-30078 event with your own key mgmt before publishing (the SDK never signs).");
+  }
+  return sdkPublishCommit({
+    event: receipt.event,
+    relays: opts.relays ?? DEFAULT_RELAYS,
+    publishToRelay: relayPublish,
+    otsStamp: opts.otsStamp,
+    requireSig: true,
+  });
 }
