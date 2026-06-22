@@ -42,6 +42,10 @@ commitPreAction(artifact)         // build UNSIGNED kind-30078 (binds output_add
   → buildReceiptProof(receipt)    // packReceiptProof(signedEvent) — byte-identical to what the contract hashes
   → escrow.release(receipt.artifact_hash, proof)   // permissionless; gated on valid ∧ match ∧ on-chain delivery
 ```
+`../run-live.ts` automates all five against a deployment: `bun run run-live.ts`. It self-checks the
+issuer pin, signs with the agent key, and runs a **static preflight** (verifier `valid`∧`match` +
+`ownerOf==output_address`) reporting whether release would succeed. **DRY_RUN defaults to true** — set
+`DRY_RUN=false` to actually openJob + release.
 
 ## Design decisions
 
