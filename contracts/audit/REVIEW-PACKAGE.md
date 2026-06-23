@@ -15,17 +15,28 @@ crypto-critical file in the recovery-escrow stack.
   this independent request.
 
 ## Assurance tiers (labeled straight)
-We don't oversell where this stands. Two tiers, distinct:
-- **Tier 1 — interim (now):** a **cred-based public-good review** by a best-matched independent reviewer
-  (the on-chain-Schnorr / `ecrecover`-trick crowd — crysol/verklegarden, a Chronicle-Schnorr reviewer,
-  Witnet's EC folks) **+ a reference-impl cross-check** (benchmark vs Chronicle `Schnorr.sol` + `crysol`).
-  Strong interim assurance + a citeable name. **This is what we're sourcing now.** No money flows on mainnet
-  yet, so nothing rides on it beyond the testnet reference + the onchain-ai example.
-- **Tier 2 — formal (the real mainnet gate):** a **grant-funded** spot audit (ENS ecosystem / EF ESP — it's
-  an ENS recovery tool). Required **before any mainnet value flows**, not before.
+We don't oversell where this stands.
 
-`BIP340.sol` stays flagged **pre-mainnet-audit** until Tier 2 lands. A Tier-1 pass does not lift that flag —
-it strengthens confidence and gives a reference cross-check.
+**Interim corroboration — ✅ DONE (two independent legs).** This establishes the *evidence base is genuine*
+and the *implementation reproduces its documented behaviour* — it does NOT audit the math. See
+[`CROSS-CHECK.md`](./CROSS-CHECK.md) (reproduce: [`crosscheck/`](./crosscheck/)):
+- **Reference cross-check** — the wired vectors are the genuine `bitcoin/bips` set with correct labels;
+  off-chain and on-chain inputs are byte-identical (`sha256(preimage)` both sides, no drift).
+- **On-EVM reproduction** — the *compiled* `BIP340.sol` / `BIP340Verifier.sol` reproduce every BIP-340
+  assertion in a real EVM (live `ecrecover` + `modexp`), 34/34, zero false-accepts.
+- Independently re-derived by **@damonzwicker** (third party to the author); separately reproduced on-EVM
+  by **@babyblueviper1** under py-evm (31/31). Both labeled **reproduction, not review**.
+
+**The open gate — the human crypto review (sourcing now).** A **cred-based public-good review** by a
+best-matched independent reviewer (the on-chain-Schnorr / `ecrecover`-trick crowd — crysol/verklegarden,
+a Chronicle-Schnorr reviewer, Witnet's EC folks) of the math the vectors *can't* establish: the
+`ecrecover`-trick soundness, the even-Y lift, and **domain-check completeness**.
+
+**Tier 2 — formal (the real mainnet gate).** A **grant-funded** spot audit (ENS ecosystem / EF ESP — it's
+an ENS recovery tool). Required **before any mainnet value flows**, not before.
+
+`BIP340.sol` stays flagged **pre-mainnet-audit** until Tier 2 lands. The interim legs + a cred-based review
+strengthen confidence; they do not lift that flag.
 
 ## What to review
 | | file | role |
