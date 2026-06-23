@@ -22,7 +22,7 @@ contract BIP340Verifier is IReceiptVerifier {
     bytes32 public immutable issuerPubkeyX;
 
     // is_proof_event signal: the commit schema family, present in the (escaped) content.
-    bytes private constant SCHEMA_MARKER = "onchain-ai.commit";
+    bytes private constant SCHEMA_MARKER = "trustless-ai.commit";
     // artifact_hash marker as it appears in the serialized (escaped) content: \"artifact_hash\":\"
     bytes private constant ARTIFACT_MARKER = "\\\"artifact_hash\\\":\\\"";
 

@@ -9,7 +9,7 @@
   },
   "dependencies": {
     "@noble/curves": "^1.9.7",
-    "@onchain-ai/agent-sdk": "github:trustless-ai/agent-sdk",
+    "@trustless-ai/agent-sdk": "^0.2.0",
     "ethers": "^6.0.0"
   }
 }

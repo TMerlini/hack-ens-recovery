@@ -3,7 +3,7 @@
 A Flashbots atomic bundle tool to rescue an ENS domain (`.eth`) from a wallet controlled by a sweeper bot — without losing the domain to the attacker.
 
 > **Recompute / verify (one rule):** every rescue emits a WYRIWE receipt (kind `30078`) binding the rescue to its owner-specified destination — checkable two ways, trusting neither the agent nor us:
-> - **off-chain** — re-derive the binding from public data: `bun run recompute.ts <job_id> <target_wallet> <output_address> <ens_label> [artifact_hash]`; full receipt via [@onchain-ai/agent-sdk] `verifyFullFlow()` / invinoveritas `/verify-proof`.
+> - **off-chain** — re-derive the binding from public data: `bun run recompute.ts <job_id> <target_wallet> <output_address> <ens_label> [artifact_hash]`; full receipt via [@trustless-ai/agent-sdk] `verifyFullFlow()` / invinoveritas `/verify-proof`.
 > - **on-chain (no oracle)** — the receipt verifies inside the escrow's `BIP340Verifier` (secp256k1 Schnorr via the `ecrecover` trick): `cd contracts && forge test` (incl. all 15 official BIP-340 vectors). Live on Sepolia ([deployments](contracts/deployments.md)); release gates on `valid ∧ artifact_hash_matches ∧ on-chain delivery`, with a replay nullifier.
 >
 > See [Verifiable receipt](#verifiable-receipt-wyriwe) · the on-chain stack lives in [`contracts/`](contracts/).
@@ -144,11 +144,11 @@ Because `output_address` is inside the hash, the receipt is **non-portable** —
 
 **The commit is the event — no central endpoint.** The kind-30078 event *is* the commitment; `agent-sdk`'s zero-dep scripts publish it to Nostr relays + OTS-anchor it (Bitcoin PoW precedence). Nothing routes through any service. It's read back via the mirrors `GET /ledger/{entry}/commitment` and `/ledger/{entry}/outcome` (so `verifyFullFlow()` and the ledger agree).
 
-**Single trust anchor.** `artifact_hash` and the commit event come from [`@onchain-ai/agent-sdk`](https://github.com/onchain-ai/agent-sdk) (`artifactHash` / `buildCommitEvent`), *not* a local copy — so the agent's hash and the escrow's `expect_artifact_hash` are byte-identical by construction (no two-implementations-drift). `judgment_type: "recovery_receipt"`, schema `onchain-ai.commit.v0`. The spec is normalized (addresses lowercased) before hashing so both sides feed `canonical()` the same input.
+**Single trust anchor.** `artifact_hash` and the commit event come from [`@trustless-ai/agent-sdk`](https://github.com/trustless-ai/agent-sdk) (`artifactHash` / `buildCommitEvent`), *not* a local copy — so the agent's hash and the escrow's `expect_artifact_hash` are byte-identical by construction (no two-implementations-drift). `judgment_type: "recovery_receipt"`, schema `trustless-ai.commit.v0`. The spec is normalized (addresses lowercased) before hashing so both sides feed `canonical()` the same input.
 
 **Anyone can verify, trusting no one:**
 - `bun run recompute.ts <job_id> <target_wallet> <output_address> <ens_label> [artifact_hash]` re-derives the binding from public data, offline.
-- Full validity (signature, invinoveritas issuance, Bitcoin-OTS precedence) via invinoveritas `/verify-proof` + [@onchain-ai/agent-sdk](https://github.com/onchain-ai)'s `verifyFullFlow()`.
+- Full validity (signature, invinoveritas issuance, Bitcoin-OTS precedence) via invinoveritas `/verify-proof` + [@trustless-ai/agent-sdk](https://github.com/trustless-ai)'s `verifyFullFlow()`.
 
 **Escrow gate (for the paid a2a service) — never `valid` alone:** release on `valid === true` **AND** `checks.artifact_hash_matches === true` **AND** on-chain delivery (the asset actually landed at `output_address`); the escrow nullifies the `artifact_hash` on release so a receipt can't be replayed.
 

@@ -8,7 +8,7 @@ Independent review request for the crypto-critical file in the recovery-escrow s
   trick + the `modexp` precompile. **This is the file that guards funds — the priority.**
 - **`src/BIP340Verifier.sol`** — supporting: decodes `receiptProof`, runs `BIP340.verify`, pins the
   issuer key, extracts `artifact_hash` from the signed preimage.
-- Out of scope: `RecoveryEscrow.sol` (escrow logic, separately unit-tested), `@onchain-ai/agent-sdk`.
+- Out of scope: `RecoveryEscrow.sol` (escrow logic, separately unit-tested), `@trustless-ai/agent-sdk`.
 
 ## Why it matters
 `BIP340.verify` is the `valid` leg of the escrow release gate (release = `valid ∧ artifactHashMatches ∧

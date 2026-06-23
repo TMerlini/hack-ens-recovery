@@ -1,7 +1,7 @@
 /**
  * WYRIWE recovery receipt (kind 30078) — the verifiable layer over the rescue.
  *
- * Single trust anchor: artifact_hash + the commit event come from @onchain-ai/agent-sdk, NOT a local
+ * Single trust anchor: artifact_hash + the commit event come from @trustless-ai/agent-sdk, NOT a local
  * copy — so the agent's hash and the escrow's expect_artifact_hash are byte-identical by construction.
  * Commit-before-outcome: committed before the bundle is broadcast; result_ref (settled tx) is the
  * outcome leg, kept OUT of the artifact preimage.
@@ -17,10 +17,10 @@ import {
   relayPublish,
   PROOF_KIND,
   type PublishResult,
-} from "@onchain-ai/agent-sdk";
+} from "@trustless-ai/agent-sdk";
 
 export const JUDGMENT_TYPE = "recovery_receipt";
-export const SCHEMA = "onchain-ai.commit.v0";
+export const SCHEMA = "trustless-ai.commit.v0";
 
 export interface RecoveryArtifact {
   job_id: string;          // salt → identical specs stay distinct (don't collide under the nullifier)

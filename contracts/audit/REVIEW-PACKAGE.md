@@ -53,9 +53,9 @@ strengthen confidence; they do not lift that flag.
 - **Official BIP-340 vectors:** [`test/BIP340Vectors.t.sol`](https://github.com/TMerlini/hack-ens-recovery/blob/wyriwe-receipt/contracts/test/BIP340Vectors.t.sol) — all 15 verification vectors from `bitcoin/bips` `test-vectors.csv` (32-byte-message set) pass, incl. every invalid case (not-on-curve pubkey, odd-Y R, negated message/s, infinite `sG−eP`, `rx` not a curve x, sig fields ≥ field/order, pubkey ≥ field size).
 - **Unit tests:** [`test/BIP340.t.sol`](https://github.com/TMerlini/hack-ens-recovery/blob/wyriwe-receipt/contracts/test/BIP340.t.sol) (real noble-curves vector + tamper cases), [`test/BIP340Verifier.t.sol`](https://github.com/TMerlini/hack-ens-recovery/blob/wyriwe-receipt/contracts/test/BIP340Verifier.t.sol) (real SDK-signed receipt).
 - **Live on Sepolia** ([`deployments.md`](https://github.com/TMerlini/hack-ens-recovery/blob/wyriwe-receipt/contracts/deployments.md)):
-  - BIP340Verifier [`0x681DfB46…67195`](https://sepolia.etherscan.io/address/0x681DfB46b744519a321dE187339386d6E8f67195) · RecoveryEscrow [`0x03e2a9Ec…fdb15`](https://sepolia.etherscan.io/address/0x03e2a9Ec424eF063ee78212A17aC9D25F26fdb15)
+  - BIP340Verifier [`0x7c99c52E…3b70`](https://sepolia.etherscan.io/address/0x7c99c52Ed86EcedD65e60482243aa882a50F3b70) · RecoveryEscrow [`0x71D8E5a2…4f59`](https://sepolia.etherscan.io/address/0x71D8E5a2AD591EEf8541527DFfD705BC69134f59)
   - deployed verifier ran a real agent-signed receipt → `(valid, match) = (true, true)`
-  - full fee-release [release tx](https://sepolia.etherscan.io/tx/0xed8974c7e842044cc81a7b5083a85a752aace38452b4352d4753028c54594c48) (block 11118096); replay reverts (nullifier).
+  - full fee-release [release tx](https://sepolia.etherscan.io/tx/0x2684908b3093590b31b6ced0d151d8b2589e6992890696b34eeb62b8412393b2) (block 11125260); replay reverts (nullifier).
 
 ## Reproduce locally
 ```bash

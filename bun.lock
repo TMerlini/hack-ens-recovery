@@ -6,7 +6,7 @@
       "name": "hack-ens-recovery",
       "dependencies": {
         "@noble/curves": "^1.9.7",
-        "@onchain-ai/agent-sdk": "github:trustless-ai/agent-sdk",
+        "@trustless-ai/agent-sdk": "^0.2.0",
         "ethers": "^6.0.0",
       },
     },
@@ -18,7 +18,7 @@
 
     "@noble/hashes": ["@noble/hashes@1.8.0", "", {}, "sha512-jCs9ldd7NwzpgXDIf6P3+NrHh9/sD6CQdxHyjQI+h/6rDNo88ypBxxz45UDuZHz9r3tNz7N/VInSVoVdtXEI4A=="],
 
-    "@onchain-ai/agent-sdk": ["@onchain-ai/agent-sdk@github:trustless-ai/agent-sdk#24258cf", { "dependencies": { "@noble/curves": "1.9.7", "@noble/hashes": "1.8.0" } }, "trustless-ai-agent-sdk-24258cf", "sha512-8yMMVyls080CeygnEY2Fu7PJQVeoZArbZfV+Vs5dlYKg2PhUFaL8olKehk/OHhY3EKVFKL5Qxx69c6tiUn/3NQ=="],
+    "@trustless-ai/agent-sdk": ["@trustless-ai/agent-sdk@0.2.0", "", { "dependencies": { "@noble/curves": "1.9.7", "@noble/hashes": "1.8.0" } }, "sha512-lwxpmBRKvO4LmsJBq11EtsyVdmEAP3BPlhuswOviWB/z8nfcuGIg1xs0GidyadX3gkEybBDj4+DQLtlPtZf3gw=="],
 
     "@types/node": ["@types/node@22.7.5", "", { "dependencies": { "undici-types": "~6.19.2" } }, "sha512-jML7s2NAzMWc//QSJ1a3prpk78cOPchGvXJsC3C6R6PSMoooztvRVQEz89gmBTBY1SPMaqo5teB4uNHPdetShQ=="],
 

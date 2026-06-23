@@ -22,7 +22,7 @@ interface IERC721 {
 ///         https://gist.github.com/TMerlini/98b7dbeb221024b617b36c7e3b79e695
 ///
 /// @dev expectArtifactHash is treated as an OPAQUE bytes32 commitment. It is a SHA-256 over canonical
-///      JSON produced off-chain by the onchain-ai agent-sdk (artifactHash(normalizeSpec(spec))), NOT a
+///      JSON produced off-chain by the trustless-ai agent-sdk (artifactHash(normalizeSpec(spec))), NOT a
 ///      keccak/abi.encode value — so the contract does not (and cannot cheaply) recompute it. Its teeth
 ///      come from (a) the verifier confirming the signed receipt carries this exact hash, and (b) the
 ///      independent on-chain ownerOf delivery check. Confirmed w/ Fede (2026-06-22): keep a SINGLE

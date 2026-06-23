@@ -7,7 +7,7 @@
  *
  * Re-derives artifact_hash = H(job_id, target_wallet, output_address, asset_set). If you pass the
  * receipt's artifact_hash as the last arg, it asserts they match. (Full receipt validity —
- * signature + invinoveritas issuance + Bitcoin-OTS precedence — is checked via @onchain-ai/agent-sdk /
+ * signature + invinoveritas issuance + Bitcoin-OTS precedence — is checked via @trustless-ai/agent-sdk /
  * invinoveritas /verify-proof; this script proves the *binding* leg offline.)
  */
 import { artifactHash } from "./receipt";
