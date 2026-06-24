@@ -37,6 +37,16 @@ assert make_non_inclusion(coords, coord("PixelGoblin #4417")) is None, "declared
 assert not verify_non_inclusion_b(mc, sr_b, count - 1, p), "count-1 must be rejected"
 assert not verify_non_inclusion_b(mc, sr_b, count + 1, p), "count+1 must be rejected"
 
+# 4. Fede's truncation/omission attack (the reason a count field exists at all):
+#    falsely nominate a DECLARED coordinate by understating N and proving against a
+#    proper PREFIX of the committed set. Sound iff cardinality is bound to scopeRoot.
+prefix = coords[:-1]                       # drop the largest declared coordinate
+target = coords[-1]                        # a coordinate genuinely IN the committed set
+atk    = make_non_inclusion(prefix, target)  # valid above-max proof vs the truncated prefix
+assert atk is not None
+assert not verify_non_inclusion_b(target, sr_b, len(prefix), atk), \
+    "truncation attack must be REJECTED: bind(root(prefix), N-1) != committed bind(root(full), N)"
+
 print("COMMITMENT      = 0x" + COMMITMENT.hex())
 print("merkle_root (a) = 0x" + root_of(coords).hex())
 print("scope_root  (b) = 0x" + sr_b.hex(), " = keccak(merkleRoot, count)")
@@ -44,5 +54,7 @@ print("count           = %d  (rides in the proof, not the commit)" % count)
 print("[1] missed coordinate NOMINABLE under (b) : OK")
 print("[2] declared coordinate un-nominable      : OK")
 print("[3] wrong count (±1) REJECTED             : OK")
-print("\n(b) is sound + complete in the reference. Cost = bind cardinality into the root;")
-print("count leaves the normative signature and is recomputed against the committed root.")
+print("[4] truncation attack (understate N vs prefix) REJECTED : OK")
+print("\n(b) is sound + complete in the reference. The binding is what makes it safe:")
+print("count leaves the normative signature but MUST stay non-malleably bound to scopeRoot,")
+print("else a prover truncates the set (understates N) and verifyAbsence passes against a prefix.")

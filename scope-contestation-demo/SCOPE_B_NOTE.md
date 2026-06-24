@@ -19,7 +19,22 @@ scope_root  (b) = 0xd80e7f63…e234ee43   = keccak(merkleRoot, count)
 [1] missed coordinate NOMINABLE under (b) : OK
 [2] declared coordinate un-nominable      : OK   (soundness preserved)
 [3] wrong count (±1) REJECTED             : OK   (binding is load-bearing)
+[4] truncation attack (understate N vs prefix) REJECTED : OK
 ```
+
+### The binding is the whole point (Fede, 2026-06-24)
+Cardinality has only **one** safe home: bound to the commitment. Carrying `count` in the
+opaque proof *alone* is NOT sound — a prover understates `N` and proves non-inclusion against
+a proper **prefix** (truncation) of the committed set. So removing the normative field requires
+the guarantee to move *up* to a normative line, not disappear with it:
+
+> A conforming scheme MUST non-malleably bind the scope's cardinality to its commitment (e.g.
+> committed within `scopeRoot`), such that `verifyAbsence` cannot be satisfied against a proper
+> prefix (truncation) of the committed set. Cardinality carried only within an opaque proof that
+> is not itself bound to the commitment does NOT satisfy this requirement.
+
+Test [4] is exactly that attack against this reference impl — rejected, because
+`bind(root(prefix), N-1) != committed bind(root(full), N)`.
 Reference logic in `scope_ref.py`: `bind_count`, `scope_root_b`, `verify_non_inclusion_b`.
 
 ## Contract delta (sketch — ~small)
