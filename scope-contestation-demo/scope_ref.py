@@ -122,3 +122,61 @@ def make_non_inclusion(coords_sorted, c):
                     "sibsLo": membership_siblings(coords_sorted, i),
                     "sibsHi": membership_siblings(coords_sorted, i + 1)}
     return None  # c is present (or equal to a leaf) -> no proof exists
+
+# ============================================================================
+# OPTION (b) — proposal backing for the IScopeContestation `count` open question.
+# Bind cardinality INTO the scope root and drop `count` from the normative
+# commitScope signature. `count` then rides inside the (opaque) proof and is
+# validated against the committed root at nominate-time, so the interface stays
+# fully scheme-agnostic while the Merkle-specific cardinality stays inside the
+# representation. (T. Merlini — reference backing, not a contract redeploy.)
+# ============================================================================
+
+def bind_count(merkle_root: bytes, count: int) -> bytes:
+    # Solidity equivalent: keccak256(abi.encode(bytes32 merkleRoot, uint256 count))
+    return k256(merkle_root + count.to_bytes(32, "big"))
+
+def scope_root_b(coords_sorted) -> bytes:
+    """(b) scope root: the (a) Merkle root with cardinality bound in."""
+    return bind_count(root_of(coords_sorted), len(coords_sorted))
+
+def _climb(leaf, idx, count, sibs):
+    """Climb the path; RETURN the recomputed Merkle root (or None on sibling mismatch).
+    Orientation/promotion derived from (idx, count) only — identical rule to verify_membership."""
+    h = leaf; pos = idx; size = count; k = 0
+    while size > 1:
+        if pos % 2 == 1:
+            if k >= len(sibs): return None
+            h = node_hash(sibs[k], h); k += 1
+        else:
+            if pos + 1 < size:
+                if k >= len(sibs): return None
+                h = node_hash(h, sibs[k]); k += 1
+            # else promoted: consume no sibling
+        pos //= 2
+        size = (size + 1) // 2
+    return h if k == len(sibs) else None
+
+def verify_non_inclusion_b(c, committed_scope_root_b, count, proof) -> bool:
+    """(b) verifier: `count` is taken from the proof (not the commit). Recompute the
+    Merkle root from the boundary membership path(s) and require
+    bind_count(merkleRoot, count) == committed scopeRoot. A wrong `count` perturbs
+    orientation -> different root -> binding check fails -> sound."""
+    case = proof["case"]
+    if case == 1:  # below min
+        lo = proof["loCoord"]
+        if not (c < lo): return False
+        r = _climb(leaf_hash(lo), 0, count, proof["sibsLo"])
+    elif case == 2:  # above max
+        hi = proof["hiCoord"]
+        if not (c > hi): return False
+        r = _climb(leaf_hash(hi), count - 1, count, proof["sibsHi"])
+    else:  # interior straddle
+        lo = proof["loCoord"]; hi = proof["hiCoord"]; idxLo = proof["idxLo"]
+        if not (idxLo + 1 == proof["idxHi"] and lo < c < hi): return False
+        rl = _climb(leaf_hash(lo), idxLo, count, proof["sibsLo"])
+        rh = _climb(leaf_hash(hi), idxLo + 1, count, proof["sibsHi"])
+        if rl is None or rh is None or rl != rh: return False
+        r = rl
+    if r is None: return False
+    return bind_count(r, count) == committed_scope_root_b
