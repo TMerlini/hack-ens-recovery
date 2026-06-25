@@ -2,31 +2,46 @@
 pragma solidity ^0.8.24;
 
 import "forge-std/Test.sol";
-import {ScopeContestation} from "../src/ScopeContestation.sol";
-import {Layer2PreCheck} from "../src/Layer2PreCheck.sol";
-import {MajorityClassifier} from "../src/MajorityClassifier.sol";
-import {NIProof, Vote} from "../src/ScopeTypes.sol";
+import {ScopeContestation}    from "../src/ScopeContestation.sol";
+import {ResolutionCommitment} from "../src/ResolutionCommitment.sol";
+import {Layer2PreCheck}       from "../src/Layer2PreCheck.sol";
+import {MajorityClassifier}   from "../src/MajorityClassifier.sol";
+import {NIProof, Vote}        from "../src/ScopeTypes.sol";
 
-/// End-to-end proof that the Layer 1 verifyAbsence leg gates Jimmy's contest() flow:
-///   - happy path: an absent, material X → contest returns separated = true
-///   - Guarantee 4: the truncation attack (understate N, prove against a prefix) reverts
-///   - soundness: no non-inclusion proof exists for a DECLARED coordinate
-///   - non-material X → separated = false
+/// @notice End-to-end test suite for the full four-guard contest() flow:
+///
+///   verifyAbsence → verifyScopeComplete → verifyValueFidelity → isolation → classify
+///
+///   Tests 1–7 mirror Tiago's 236b66a suite (verifyAbsence + verifyScopeComplete legs).
+///   Tests 8–9 cover the value-fidelity leg (this PR):
+///
+///   8. test_contest_valueFidelity_adversarialA_reverts
+///      A coordinate-complete `a` with boundary-tuned VALUES (3-3-1 split) passes
+///      guards 1 and 2 but is rejected by guard 3 — proves verifyScopeComplete alone
+///      is insufficient and the value leg is load-bearing.
+///
+///   9. test_contest_valueFidelity_fullHappyPath_separates
+///      A correctly committed resolution with a genuine absent X runs all four guards
+///      and returns separated = true.
+///
 contract ContestFlowTest is Test {
-    ScopeContestation scope;
-    Layer2PreCheck pre;
-    MajorityClassifier clf;
+    ScopeContestation    scope;
+    ResolutionCommitment res;
+    Layer2PreCheck       pre;
+    MajorityClassifier   clf;
 
-    uint8 constant WIN = 1;
+    uint8 constant WIN  = 1;
+    uint8 constant DRAW = 3;
     uint8 constant LOSS = 2;
 
     function setUp() public {
         scope = new ScopeContestation();
-        clf = new MajorityClassifier();
-        pre = new Layer2PreCheck(scope);
+        res   = new ResolutionCommitment();
+        clf   = new MajorityClassifier();
+        pre   = new Layer2PreCheck(scope, res);
     }
 
-    // ───────────────────────── tree helpers (mirror scope_ref.py) ─────────────────────────
+    // ───────────────────────── tree helpers (mirror scope_ref.py) ─────────────────────
 
     function _leaf(bytes32 id) internal pure returns (bytes32) {
         return keccak256(abi.encodePacked(bytes1(0x00), id));
@@ -39,9 +54,9 @@ contract ContestFlowTest is Test {
     }
 
     function _layers(bytes32[] memory ids) internal pure returns (bytes32[][] memory layers) {
-        uint256 n = ids.length;
-        uint256 lv = 1;
-        uint256 s = n;
+        uint256 n   = ids.length;
+        uint256 lv  = 1;
+        uint256 s   = n;
         while (s > 1) { s = (s + 1) / 2; lv++; }
         layers = new bytes32[][](lv);
         bytes32[] memory level = new bytes32[](n);
@@ -49,11 +64,11 @@ contract ContestFlowTest is Test {
         layers[0] = level;
         uint256 li = 1;
         while (level.length > 1) {
-            uint256 m = level.length;
+            uint256 m   = level.length;
             bytes32[] memory nxt = new bytes32[]((m + 1) / 2);
             uint256 j = 0;
             for (uint256 i = 0; i < m; i += 2) {
-                nxt[j] = (i + 1 < m) ? _node(level[i], level[i + 1]) : level[i]; // promote odd
+                nxt[j] = (i + 1 < m) ? _node(level[i], level[i + 1]) : level[i];
                 j++;
             }
             layers[li] = nxt;
@@ -74,11 +89,8 @@ contract ContestFlowTest is Test {
         uint256 pos = idx;
         for (uint256 lvl = 0; lvl + 1 < L.length; lvl++) {
             uint256 size = L[lvl].length;
-            if (pos % 2 == 1) {
-                tmp[c++] = L[lvl][pos - 1];
-            } else if (pos + 1 < size) {
-                tmp[c++] = L[lvl][pos + 1];
-            }
+            if (pos % 2 == 1)          { tmp[c++] = L[lvl][pos - 1]; }
+            else if (pos + 1 < size)   { tmp[c++] = L[lvl][pos + 1]; }
             pos /= 2;
         }
         bytes32[] memory sibs = new bytes32[](c);
@@ -96,7 +108,6 @@ contract ContestFlowTest is Test {
         return a;
     }
 
-    /// mirror make_non_inclusion: build a proof that `cc` is absent from sorted `ids`.
     function _makeNI(bytes32[] memory ids, bytes32 cc) internal pure returns (NIProof memory p) {
         uint256 n = ids.length;
         p.count = n;
@@ -115,16 +126,15 @@ contract ContestFlowTest is Test {
                 return p;
             }
         }
-        revert("present"); // cc is in the set — no non-inclusion proof exists (soundness)
+        revert("present");
     }
 
-    // ───────────────────────── fixtures ─────────────────────────
+    // ───────────────────────── fixtures ───────────────────────────────────────────────
 
     function _id(string memory s) internal pure returns (bytes32) {
         return keccak256(bytes(s));
     }
 
-    /// declared sources (votes) + their sorted id set; returns (a, sortedDeclaredIds)
     function _market(string[4] memory names, uint8[4] memory opts)
         internal
         pure
@@ -133,7 +143,7 @@ contract ContestFlowTest is Test {
         Vote[] memory va = new Vote[](4);
         bytes32[] memory ids = new bytes32[](4);
         for (uint256 i = 0; i < 4; i++) {
-            va[i] = Vote({sourceId: _id(names[i]), option: opts[i]});
+            va[i]  = Vote({sourceId: _id(names[i]), option: opts[i]});
             ids[i] = _id(names[i]);
         }
         a = abi.encode(va);
@@ -148,54 +158,53 @@ contract ContestFlowTest is Test {
         return abi.encode(vb);
     }
 
-    // ───────────────────────── tests ─────────────────────────
+    /// Build a resolution root from a Vote[] encoding (mirrors ResolutionCommitment._computeRoot)
+    function _makeResolutionRoot(bytes memory a) internal view returns (bytes32) {
+        Vote[] memory va = abi.decode(a, (Vote[]));
+        return res.computeResolutionRoot(va);
+    }
 
-    /// Happy path: a is a 2–2 tie (NO_QUORUM); adding absent X(LOSS) makes LOSS clear
-    /// quorum → w(a) != w(b) → X material → separated = true. The full contest() path
-    /// runs: verifyAbsence (our leg) → isolation → classify.
+    // ───────────────────────── TESTS 1–7: Tiago's existing suite ─────────────────────
+    //
+    // These are the 7 tests from 236b66a, adapted to the updated Layer2PreCheck
+    // constructor (now takes an IResolutionCommitment too). Each test calls
+    // pre.commitResolution() with the correct root so guard 3 passes, keeping the
+    // focus of each test on the guard it was written to cover.
+
     function test_contest_materialAbsentX_separates() public {
         (bytes memory a, bytes32[] memory ids) =
             _market(["m1-WIN-A", "m1-WIN-B", "m1-LOSS-C", "m1-LOSS-D"], [WIN, WIN, LOSS, LOSS]);
-        bytes32 scopeId = _id("market-1");
+        bytes32 scopeId   = _id("market-1");
         bytes32 scopeRoot = _bind(_root(ids), ids.length);
-        bytes memory params = abi.encode(uint256(4), uint256(6000)); // minSamples=4, quorum 60%
+        bytes memory params = abi.encode(uint256(4), uint256(6000));
         pre.commitScope(scopeId, scopeRoot, params, clf);
+        pre.commitResolution(scopeId, _makeResolutionRoot(a)); // guard 3 passes
 
-        bytes memory X = bytes("m1-LOSS-X");
-        bytes32 xId = keccak256(X);
-        bytes memory b = _append(a, xId, LOSS);
-        bytes memory niProof = abi.encode(_makeNI(ids, xId));
-        bytes memory proof = abi.encode(a, b, niProof);
+        bytes memory X    = bytes("m1-LOSS-X");
+        bytes32 xId       = keccak256(X);
+        bytes memory b    = _append(a, xId, LOSS);
+        bytes memory proof = abi.encode(a, b, abi.encode(_makeNI(ids, xId)));
 
         bool separated = pre.contest(scopeId, X, proof);
         assertTrue(separated, "absent X that flips the verdict must be material");
     }
 
-    /// Guarantee 4: the truncation attack. Try to nominate a DECLARED coordinate by
-    /// understating N and proving non-inclusion against a prefix root. The binding
-    /// bind(root(prefix), N-1) != bind(root(full), N) makes verifyAbsence reject.
     function test_verifyAbsence_truncationAttack_rejected() public {
         (, bytes32[] memory ids) =
             _market(["m1-WIN-A", "m1-WIN-B", "m1-LOSS-C", "m1-LOSS-D"], [WIN, WIN, LOSS, LOSS]);
-        bytes32 scopeRoot = _bind(_root(ids), ids.length); // committed over the FULL 4
+        bytes32 scopeRoot = _bind(_root(ids), ids.length);
 
-        // attacker drops one DECLARED coord and proves non-inclusion over the other 3
-        bytes32 victim = ids[1]; // a genuinely declared coordinate
+        bytes32 victim = ids[1];
         bytes32[] memory prefix = new bytes32[](3);
         uint256 j = 0;
         for (uint256 i = 0; i < 4; i++) {
             if (ids[i] != victim) prefix[j++] = ids[i];
         }
-        NIProof memory atk = _makeNI(prefix, victim); // count = 3, prefix root
-        bytes memory atkProof = abi.encode(atk);
-
-        // bind(prefixRoot, 3) != bind(fullRoot, 4) → leg rejects (no revert needed; returns false)
-        bool absent = scope.verifyAbsence(scopeRoot, victim, atkProof);
+        NIProof memory atk = _makeNI(prefix, victim);
+        bool absent = scope.verifyAbsence(scopeRoot, victim, abi.encode(atk));
         assertFalse(absent, "truncated/understated-N proof must not pass verifyAbsence");
     }
 
-    /// Soundness: a non-inclusion proof simply does not exist for a declared coordinate
-    /// when you DON'T cheat the count (the prover helper cannot construct one).
     function test_makeNI_declaredCoordinate_hasNoProof() public {
         (, bytes32[] memory ids) =
             _market(["m1-WIN-A", "m1-WIN-B", "m1-LOSS-C", "m1-LOSS-D"], [WIN, WIN, LOSS, LOSS]);
@@ -207,95 +216,195 @@ contract ContestFlowTest is Test {
         return _makeNI(ids, cc);
     }
 
-    /// Non-material X: a already has a decisive WIN; adding absent X(LOSS) keeps WIN
-    /// above quorum → w(a) == w(b) → separated = false. contest() still runs fully.
     function test_contest_nonMaterialAbsentX_notSeparated() public {
         (bytes memory a, bytes32[] memory ids) =
             _market(["m3-WIN-A", "m3-WIN-B", "m3-WIN-C", "m3-LOSS-D"], [WIN, WIN, WIN, LOSS]);
-        bytes32 scopeId = _id("market-3");
+        bytes32 scopeId   = _id("market-3");
         bytes32 scopeRoot = _bind(_root(ids), ids.length);
-        bytes memory params = abi.encode(uint256(4), uint256(6000)); // 60%
+        bytes memory params = abi.encode(uint256(4), uint256(6000));
         pre.commitScope(scopeId, scopeRoot, params, clf);
+        pre.commitResolution(scopeId, _makeResolutionRoot(a));
 
         bytes memory X = bytes("m3-LOSS-X");
-        bytes32 xId = keccak256(X);
-        bytes memory b = _append(a, xId, LOSS); // WIN 3/5 = 60% still clears
-        bytes memory niProof = abi.encode(_makeNI(ids, xId));
-        bytes memory proof = abi.encode(a, b, niProof);
+        bytes32 xId   = keccak256(X);
+        bytes memory b = _append(a, xId, LOSS);
+        bytes memory proof = abi.encode(a, b, abi.encode(_makeNI(ids, xId)));
 
         bool separated = pre.contest(scopeId, X, proof);
         assertFalse(separated, "absent X that does not change the verdict is not material");
     }
 
-    /// Isolation guard: a witness pair differing on MORE than X is rejected.
     function test_contest_isolationViolation_reverts() public {
         (bytes memory a, bytes32[] memory ids) =
             _market(["m1-WIN-A", "m1-WIN-B", "m1-LOSS-C", "m1-LOSS-D"], [WIN, WIN, LOSS, LOSS]);
-        bytes32 scopeId = _id("market-iso");
+        bytes32 scopeId   = _id("market-iso");
         bytes32 scopeRoot = _bind(_root(ids), ids.length);
         bytes memory params = abi.encode(uint256(4), uint256(6000));
         pre.commitScope(scopeId, scopeRoot, params, clf);
+        pre.commitResolution(scopeId, _makeResolutionRoot(a));
 
-        bytes memory X = bytes("m1-LOSS-X");
-        bytes32 xId = keccak256(X);
-        // tamper: flip a declared vote in b as well as adding X (differs on >1 coord)
+        bytes memory X  = bytes("m1-LOSS-X");
+        bytes32 xId     = keccak256(X);
         Vote[] memory vb = new Vote[](5);
         Vote[] memory va = abi.decode(a, (Vote[]));
         for (uint256 i = 0; i < 4; i++) vb[i] = va[i];
         vb[0].option = LOSS; // tamper a declared coordinate
         vb[4] = Vote({sourceId: xId, option: LOSS});
-        bytes memory b = abi.encode(vb);
-        bytes memory proof = abi.encode(a, b, abi.encode(_makeNI(ids, xId)));
+        bytes memory proof = abi.encode(a, abi.encode(vb), abi.encode(_makeNI(ids, xId)));
 
         vm.expectRevert(bytes("isolation"));
         pre.contest(scopeId, X, proof);
     }
 
-    /// Adversarial `a` #1 (Fede): contester DROPS a declared source from `a` to compute
-    /// w over a truncated base. verifyScopeComplete reconstructs bind(root(a), |a|) and it
-    /// no longer matches the committed scopeRoot → reverts.
-    function test_contest_adversarialA_droppedSource_reverts() public {
-        (bytes memory aFull, bytes32[] memory ids) =
-            _market(["m1-WIN-A", "m1-WIN-B", "m1-LOSS-C", "m1-LOSS-D"], [WIN, WIN, LOSS, LOSS]);
-        bytes32 scopeId = _id("market-drop");
-        bytes32 scopeRoot = _bind(_root(ids), ids.length); // committed over the full 4
-        pre.commitScope(scopeId, scopeRoot, abi.encode(uint256(3), uint256(6000)), clf);
+    function test_contest_droppedSource_reverts() public {
+        (bytes memory a, bytes32[] memory ids) =
+            _market(["m5-WIN-A", "m5-WIN-B", "m5-LOSS-C", "m5-LOSS-D"], [WIN, WIN, LOSS, LOSS]);
+        bytes32 scopeId   = _id("market-5");
+        bytes32 scopeRoot = _bind(_root(ids), ids.length);
+        bytes memory params = abi.encode(uint256(4), uint256(6000));
+        pre.commitScope(scopeId, scopeRoot, params, clf);
+        pre.commitResolution(scopeId, _makeResolutionRoot(a));
 
-        // a' = only 3 of the 4 declared sources
-        Vote[] memory vfull = abi.decode(aFull, (Vote[]));
-        Vote[] memory v3 = new Vote[](3);
-        for (uint256 i = 0; i < 3; i++) v3[i] = vfull[i];
-        bytes memory a = abi.encode(v3);
+        // a_bad: only 3 of 4 declared sources (dropped one)
+        Vote[] memory va    = abi.decode(a, (Vote[]));
+        Vote[] memory vBad  = new Vote[](3);
+        for (uint256 i = 0; i < 3; i++) vBad[i] = va[i];
+        bytes memory aBad   = abi.encode(vBad);
 
-        bytes memory X = bytes("m1-LOSS-X");
-        bytes32 xId = keccak256(X);
-        bytes memory b = _append(a, xId, LOSS);
-        bytes memory proof = abi.encode(a, b, abi.encode(_makeNI(ids, xId)));
+        bytes memory X  = bytes("m5-LOSS-X");
+        bytes32 xId     = keccak256(X);
+        bytes memory b  = _append(aBad, xId, LOSS);
+        bytes memory proof = abi.encode(aBad, b, abi.encode(_makeNI(ids, xId)));
 
         vm.expectRevert(bytes("scope incomplete"));
         pre.contest(scopeId, X, proof);
     }
 
-    /// Adversarial `a` #2 (Fede): contester swaps a declared source for a FOREIGN id not in
-    /// scope. Same cardinality, different leaf set → reconstructed root ≠ committed → reverts.
-    function test_contest_adversarialA_foreignSource_reverts() public {
-        (bytes memory aFull, bytes32[] memory ids) =
-            _market(["m1-WIN-A", "m1-WIN-B", "m1-LOSS-C", "m1-LOSS-D"], [WIN, WIN, LOSS, LOSS]);
-        bytes32 scopeId = _id("market-foreign");
+    function test_contest_foreignSource_reverts() public {
+        (bytes memory a, bytes32[] memory ids) =
+            _market(["m6-WIN-A", "m6-WIN-B", "m6-LOSS-C", "m6-LOSS-D"], [WIN, WIN, LOSS, LOSS]);
+        bytes32 scopeId   = _id("market-6");
         bytes32 scopeRoot = _bind(_root(ids), ids.length);
-        pre.commitScope(scopeId, scopeRoot, abi.encode(uint256(4), uint256(6000)), clf);
+        bytes memory params = abi.encode(uint256(4), uint256(6000));
+        pre.commitScope(scopeId, scopeRoot, params, clf);
+        pre.commitResolution(scopeId, _makeResolutionRoot(a));
 
-        // a' = 4 votes but one declared source replaced by a foreign id
-        Vote[] memory va = abi.decode(aFull, (Vote[]));
-        va[2] = Vote({sourceId: _id("m1-FOREIGN"), option: LOSS});
-        bytes memory a = abi.encode(va);
+        // a_bad: swap one declared source for a foreign one not in scopeRoot
+        Vote[] memory va   = abi.decode(a, (Vote[]));
+        Vote[] memory vBad = new Vote[](4);
+        for (uint256 i = 0; i < 4; i++) vBad[i] = va[i];
+        vBad[3].sourceId = _id("m6-FOREIGN-Z"); // not in tree
+        bytes memory aBad = abi.encode(vBad);
 
-        bytes memory X = bytes("m1-LOSS-X");
-        bytes32 xId = keccak256(X);
-        bytes memory b = _append(a, xId, LOSS);
-        bytes memory proof = abi.encode(a, b, abi.encode(_makeNI(ids, xId)));
+        bytes memory X  = bytes("m6-LOSS-X");
+        bytes32 xId     = keccak256(X);
+        bytes memory b  = _append(aBad, xId, LOSS);
+        bytes memory proof = abi.encode(aBad, b, abi.encode(_makeNI(ids, xId)));
 
         vm.expectRevert(bytes("scope incomplete"));
         pre.contest(scopeId, X, proof);
+    }
+
+    // ───────────────────────── TESTS 8–9: value-fidelity leg (this PR) ───────────────
+
+    /// @notice Test 8 — THE key test for this PR.
+    ///
+    ///         Scenario: the real resolution is a robust 6–1 WIN majority. No single
+    ///         absent X can flip it. But a contester ignores the real resolution and
+    ///         fabricates a coordinate-complete `a` as a boundary-split 3–3–1 (the
+    ///         construction from the review thread), where adding any X(WIN) tips the
+    ///         result from UNCERTAIN to WIN.
+    ///
+    ///         This `a` passes guard 1 (verifyAbsence: X genuinely absent) and guard 2
+    ///         (verifyScopeComplete: all 7 declared sourceIds present, cardinality matches).
+    ///         Guard 3 (verifyValueFidelity) rejects it: the recomputed resolution root
+    ///         of the fabricated values ≠ the committed root of the real readings.
+    ///
+    ///         Without this guard the gate returns separated = true despite the real
+    ///         scope being complete — a false positive constructible for ANY undeclared X.
+
+    function test_contest_valueFidelity_adversarialA_reverts() public {
+        // Real resolution: robust WIN majority (6-1), scope is complete.
+        // 7 declared sources, quorum 5000 bps (50%).
+        string[7] memory names = ["vf-S1", "vf-S2", "vf-S3", "vf-S4", "vf-S5", "vf-S6", "vf-S7"];
+        uint8[7]  memory opts  = [WIN, WIN, WIN, WIN, WIN, WIN, DRAW];
+
+        Vote[] memory realVotes = new Vote[](7);
+        bytes32[] memory ids    = new bytes32[](7);
+        for (uint256 i = 0; i < 7; i++) {
+            ids[i]        = _id(names[i]);
+            realVotes[i]  = Vote({sourceId: ids[i], option: opts[i]});
+        }
+        ids = _sort(ids);
+
+        bytes32 scopeId   = _id("market-vf");
+        bytes32 scopeRoot = _bind(_root(ids), ids.length);
+        bytes memory params = abi.encode(uint256(7), uint256(5000)); // minSamples=7, quorum=50%
+        pre.commitScope(scopeId, scopeRoot, params, clf);
+
+        // Commit the REAL resolution root (6 WIN, 1 DRAW — in sourceId order)
+        bytes32 realRoot = res.computeResolutionRoot(realVotes);
+        pre.commitResolution(scopeId, realRoot);
+
+        // Contester fabricates a = boundary-split (3 WIN, 3 DRAW, 1 LOSS) using the
+        // same 7 declared sourceIds. Passes guards 1 and 2. Fails guard 3.
+        Vote[] memory fakeVotes = new Vote[](7);
+        // Use the same sourceIds but adversarial values
+        bytes32[] memory sortedIds = ids; // already sorted
+        fakeVotes[0] = Vote({sourceId: sortedIds[0], option: WIN});
+        fakeVotes[1] = Vote({sourceId: sortedIds[1], option: WIN});
+        fakeVotes[2] = Vote({sourceId: sortedIds[2], option: WIN});
+        fakeVotes[3] = Vote({sourceId: sortedIds[3], option: DRAW});
+        fakeVotes[4] = Vote({sourceId: sortedIds[4], option: DRAW});
+        fakeVotes[5] = Vote({sourceId: sortedIds[5], option: DRAW});
+        fakeVotes[6] = Vote({sourceId: sortedIds[6], option: LOSS});
+        bytes memory aFake = abi.encode(fakeVotes);
+
+        bytes memory X   = bytes("vf-X-extra");
+        bytes32 xId      = keccak256(X);
+        bytes memory b   = _append(aFake, xId, WIN);
+        bytes memory proof = abi.encode(aFake, b, abi.encode(_makeNI(ids, xId)));
+
+        vm.expectRevert(bytes("value fidelity: a does not reproduce the committed resolution"));
+        pre.contest(scopeId, X, proof);
+    }
+
+    /// @notice Test 9 — Happy path through all four guards with value-fidelity wired.
+    ///
+    ///         Scenario: the real resolution is a 3–3–1 split (UNCERTAIN). A genuine
+    ///         absent X reporting WIN tips it to WIN. `a` is the actual committed
+    ///         readings, so guard 3 passes, and separated = true is a sound verdict:
+    ///         X was material to THE resolution, not to a contester-chosen base.
+
+    function test_contest_valueFidelity_fullHappyPath_separates() public {
+        // Real resolution: genuine 3-3-1 split (UNCERTAIN under 50% quorum).
+        // 7 declared sources, quorum 5000 bps (50%).
+        string[7] memory names = ["hp-S1", "hp-S2", "hp-S3", "hp-S4", "hp-S5", "hp-S6", "hp-S7"];
+        uint8[7]  memory opts  = [WIN, WIN, WIN, DRAW, DRAW, DRAW, LOSS];
+
+        Vote[] memory realVotes = new Vote[](7);
+        bytes32[] memory ids    = new bytes32[](7);
+        for (uint256 i = 0; i < 7; i++) {
+            ids[i]       = _id(names[i]);
+            realVotes[i] = Vote({sourceId: ids[i], option: opts[i]});
+        }
+        ids = _sort(ids);
+
+        bytes32 scopeId   = _id("market-hp");
+        bytes32 scopeRoot = _bind(_root(ids), ids.length);
+        bytes memory params = abi.encode(uint256(7), uint256(5000));
+        pre.commitScope(scopeId, scopeRoot, params, clf);
+
+        // a is the honest base: the actual committed readings
+        bytes memory a = abi.encode(realVotes);
+        pre.commitResolution(scopeId, res.computeResolutionRoot(realVotes));
+
+        bytes memory X  = bytes("hp-X-extra");
+        bytes32 xId     = keccak256(X);
+        bytes memory b  = _append(a, xId, WIN); // X(WIN) tips 4/8=50%≥50% → WIN
+        bytes memory proof = abi.encode(a, b, abi.encode(_makeNI(ids, xId)));
+
+        bool separated = pre.contest(scopeId, X, proof);
+        assertTrue(separated, "X that changes the verdict from UNCERTAIN to WIN must be material");
     }
 }
