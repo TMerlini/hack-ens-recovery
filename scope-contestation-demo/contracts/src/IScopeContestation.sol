@@ -33,4 +33,14 @@ interface IScopeContestation {
         external
         view
         returns (bool absent);
+
+    /// @notice DUAL of verifyAbsence — bind a witness set's base to the declared scope.
+    ///         True iff `sourceIds` is EXACTLY the committed declared set (every id a
+    ///         leaf, all N present, none extra/missing), so w(a) is computed over the
+    ///         declared scope rather than a contester-chosen base. Without it,
+    ///         separation is only "material to this a", not "to the declared scope".
+    function verifyScopeComplete(bytes32 scopeRoot, bytes32[] calldata sourceIds)
+        external
+        view
+        returns (bool complete);
 }

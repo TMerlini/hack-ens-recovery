@@ -250,4 +250,52 @@ contract ContestFlowTest is Test {
         vm.expectRevert(bytes("isolation"));
         pre.contest(scopeId, X, proof);
     }
+
+    /// Adversarial `a` #1 (Fede): contester DROPS a declared source from `a` to compute
+    /// w over a truncated base. verifyScopeComplete reconstructs bind(root(a), |a|) and it
+    /// no longer matches the committed scopeRoot → reverts.
+    function test_contest_adversarialA_droppedSource_reverts() public {
+        (bytes memory aFull, bytes32[] memory ids) =
+            _market(["m1-WIN-A", "m1-WIN-B", "m1-LOSS-C", "m1-LOSS-D"], [WIN, WIN, LOSS, LOSS]);
+        bytes32 scopeId = _id("market-drop");
+        bytes32 scopeRoot = _bind(_root(ids), ids.length); // committed over the full 4
+        pre.commitScope(scopeId, scopeRoot, abi.encode(uint256(3), uint256(6000)), clf);
+
+        // a' = only 3 of the 4 declared sources
+        Vote[] memory vfull = abi.decode(aFull, (Vote[]));
+        Vote[] memory v3 = new Vote[](3);
+        for (uint256 i = 0; i < 3; i++) v3[i] = vfull[i];
+        bytes memory a = abi.encode(v3);
+
+        bytes memory X = bytes("m1-LOSS-X");
+        bytes32 xId = keccak256(X);
+        bytes memory b = _append(a, xId, LOSS);
+        bytes memory proof = abi.encode(a, b, abi.encode(_makeNI(ids, xId)));
+
+        vm.expectRevert(bytes("scope incomplete"));
+        pre.contest(scopeId, X, proof);
+    }
+
+    /// Adversarial `a` #2 (Fede): contester swaps a declared source for a FOREIGN id not in
+    /// scope. Same cardinality, different leaf set → reconstructed root ≠ committed → reverts.
+    function test_contest_adversarialA_foreignSource_reverts() public {
+        (bytes memory aFull, bytes32[] memory ids) =
+            _market(["m1-WIN-A", "m1-WIN-B", "m1-LOSS-C", "m1-LOSS-D"], [WIN, WIN, LOSS, LOSS]);
+        bytes32 scopeId = _id("market-foreign");
+        bytes32 scopeRoot = _bind(_root(ids), ids.length);
+        pre.commitScope(scopeId, scopeRoot, abi.encode(uint256(4), uint256(6000)), clf);
+
+        // a' = 4 votes but one declared source replaced by a foreign id
+        Vote[] memory va = abi.decode(aFull, (Vote[]));
+        va[2] = Vote({sourceId: _id("m1-FOREIGN"), option: LOSS});
+        bytes memory a = abi.encode(va);
+
+        bytes memory X = bytes("m1-LOSS-X");
+        bytes32 xId = keccak256(X);
+        bytes memory b = _append(a, xId, LOSS);
+        bytes memory proof = abi.encode(a, b, abi.encode(_makeNI(ids, xId)));
+
+        vm.expectRevert(bytes("scope incomplete"));
+        pre.contest(scopeId, X, proof);
+    }
 }

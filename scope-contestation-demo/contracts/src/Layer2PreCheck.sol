@@ -70,6 +70,11 @@ contract Layer2PreCheck {
             "verifyAbsence: present or unanchored"
         );
 
+        // GUARD — scope-completeness (dual of verifyAbsence): a's base IS exactly the
+        // committed declared set, so w(a) is computed over the declared scope, not a
+        // contester-chosen base. Closes the adversarial-`a` gap (Fede, 2026-06-25).
+        require(scope.verifyScopeComplete(m.scopeRoot, _sourceIds(a)), "scope incomplete");
+
         // GUARD — isolation: b adds exactly X over a, agreeing on every declared coord.
         require(_isolated(a, b, coordinateHash), "isolation");
 
@@ -89,5 +94,12 @@ contract Layer2PreCheck {
             if (va[i].sourceId == x) return false; // X must be undeclared
         }
         return vb[va.length].sourceId == x;
+    }
+
+    /// @dev Extract the witness set's source identities for the scope-completeness guard.
+    function _sourceIds(bytes memory a) private pure returns (bytes32[] memory ids) {
+        Vote[] memory va = abi.decode(a, (Vote[]));
+        ids = new bytes32[](va.length);
+        for (uint256 i = 0; i < va.length; i++) ids[i] = va[i].sourceId;
     }
 }
