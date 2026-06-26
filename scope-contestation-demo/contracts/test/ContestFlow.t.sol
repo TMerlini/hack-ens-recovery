@@ -407,4 +407,38 @@ contract ContestFlowTest is Test {
         bool separated = pre.contest(scopeId, X, proof);
         assertTrue(separated, "X that changes the verdict from UNCERTAIN to WIN must be material");
     }
+
+    /// @notice Test 10 — the value-commitment is bound to the FULL declared scope
+    ///         (Damon's point 2, the scope↔resolution seam). The resolution authority
+    ///         commits a resolutionRoot over only 3 of the 4 declared coordinates,
+    ///         leaving one declared coord absent from the value commitment. An honest
+    ///         contester MUST still include all 4 (verifyScopeComplete forces presence),
+    ///         so verifyValueFidelity recomputes a 4-leaf root that can never equal the
+    ///         committed 3-leaf root → revert. No declared coord can be present-but-
+    ///         value-unconstrained: the binding holds transitively, no extra guard
+    ///         needed. (Belt-and-suspenders for the normative line.)
+    function test_contest_valueCommitment_boundToFullScope() public {
+        (bytes memory a, bytes32[] memory ids) =
+            _market(["vb-A", "vb-B", "vb-C", "vb-D"], [WIN, WIN, LOSS, LOSS]);
+        bytes32 scopeId   = _id("market-valbind");
+        bytes32 scopeRoot = _bind(_root(ids), ids.length); // committed over all 4
+        pre.commitScope(scopeId, scopeRoot, abi.encode(uint256(4), uint256(6000)), clf);
+
+        // Resolution authority omits one declared coord (vb-D) from the value commitment.
+        Vote[] memory full = abi.decode(a, (Vote[]));
+        Vote[] memory only3 = new Vote[](3);
+        for (uint256 i = 0; i < 3; i++) only3[i] = full[i]; // drop vb-D's reading
+        pre.commitResolution(scopeId, res.computeResolutionRoot(only3));
+
+        // Honest contester: a is the full declared set (required by verifyScopeComplete).
+        bytes memory X  = bytes("vb-X");
+        bytes32 xId     = keccak256(X);
+        bytes memory b  = _append(a, xId, LOSS);
+        bytes memory proof = abi.encode(a, b, abi.encode(_makeNI(ids, xId)));
+
+        // 4-leaf recompute ≠ committed 3-leaf root → the coord absent from the value
+        // commitment can't slip through with an unconstrained value; the contest reverts.
+        vm.expectRevert(bytes("value fidelity: a does not reproduce the committed resolution"));
+        pre.contest(scopeId, X, proof);
+    }
 }
