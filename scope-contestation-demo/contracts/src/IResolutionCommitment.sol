@@ -81,4 +81,21 @@ interface IResolutionCommitment {
         external
         view
         returns (bool faithful);
+
+    /// @notice GUARD 7 (adversarial-X): pin the value of a SINGLE coordinate — the omitted
+    ///         coordinate X being contested — against the committed resolution. X is not in
+    ///         `a` (it was omitted by definition), so it cannot ride the bulk
+    ///         verifyValueFidelity(a) check; its value is pinned here independently.
+    /// @dev    type-1 (chain-native): recompute value from the pinned chain source at the
+    ///         committed block and require equality — same machinery as verifyValueFidelity,
+    ///         pointed at one key. type-2 (off-chain): X is in no commitment, so its value
+    ///         authenticity is the orthogonal source-auth / zkTLS leg — returns false here,
+    ///         deferring to that leg rather than conflating it with value-fidelity.
+    /// @param key   the coordinate identity (X's sourceId == coordinateHash)
+    /// @param value the contester's claimed reading at X (abi-encoded option/value)
+    /// @return ok   true iff X's claimed value reproduces its real committed reading
+    function verifyCoordinateValue(bytes32 scopeId, bytes32 key, bytes calldata value)
+        external
+        view
+        returns (bool ok);
 }

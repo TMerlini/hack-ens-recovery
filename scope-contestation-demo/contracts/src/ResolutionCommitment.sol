@@ -92,6 +92,21 @@ contract ResolutionCommitment is IResolutionCommitment {
         return keccak256(abi.encode(leaves)) == committed;
     }
 
+    /// @inheritdoc IResolutionCommitment
+    /// @notice GUARD 7 (type-2): X (the omitted coordinate) is in NO commitment by
+    ///         definition, so there is nothing on-chain to recompute its value against.
+    ///         Its authenticity is the orthogonal source-auth / zkTLS leg, kept separate
+    ///         from value-fidelity (the two legs Damon kept orthogonal). Returns false so a
+    ///         type-2 contest cannot pin X's value here — it must come through the source-auth
+    ///         leg, not be conflated with the resolution commitment.
+    function verifyCoordinateValue(bytes32, bytes32, bytes calldata)
+        external
+        pure
+        returns (bool)
+    {
+        return false; // type-2: defer to the orthogonal source-auth leg
+    }
+
     // ─────────────────────────── helper (for committer) ───────────────────────────
 
     /// @notice Compute the resolutionRoot for a set of (sourceId, value) pairs.

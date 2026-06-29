@@ -91,4 +91,18 @@ contract ChainNativeResolution is IResolutionCommitment {
         }
         return true;
     }
+
+    /// @inheritdoc IResolutionCommitment
+    /// @notice GUARD 7 (type-1): recompute the contested coordinate's value from the pinned
+    ///         chain source — identical machinery to verifyValueFidelity, pointed at one key.
+    function verifyCoordinateValue(bytes32 scopeId, bytes32 key, bytes calldata value)
+        external
+        view
+        returns (bool)
+    {
+        Source memory s = _src[scopeId];
+        if (!s.set) return false;                       // no chain source committed
+        uint8 claimed = abi.decode(value, (uint8));     // X's claimed option
+        return s.reader.valueAt(key, s.blockPin) == claimed;
+    }
 }
