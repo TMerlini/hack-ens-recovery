@@ -17,6 +17,14 @@ import {Vote} from "../src/ScopeTypes.sol";
 ///   3. GUARD 7 READS STRAIGHT OFF THE DELTA. With delta = (sourceId, value), the value-fidelity
 ///      check for X is valueAt(delta.sourceId, blockPin) == delta.value - no extracting the
 ///      appended vote back out of a reconstructed b. Closes adversarial-X.
+///
+/// SINGLE-X by design: the contest is one omitted coordinate, so delta is one Vote and b = a ++ [X].
+/// The multi-X generalization (delta = Vote[]) is a documented FUTURE, not a constraint: each delta
+/// coordinate would get its own verifyAbsence + guard-7 value pin — same invariant repeated, no new one.
+///
+/// Damon's pin (encoding stability): the reconstructed b MUST be abi.encode(Vote[]) byte-identical to
+/// the b a contester builds today (append-then-encode), or the classify digest shifts. Test 1 confirms
+/// it against the CANONICAL append path (not against itself) so recompute-kit stays green across the change.
 contract DeltaIsolationGuard7Test is Test {
     MockChainReadings chain;
     uint256 PIN;
@@ -52,23 +60,30 @@ contract DeltaIsolationGuard7Test is Test {
         return b;
     }
 
-    // the OLD bundle's full b (what callers pass today)
-    function _fullB(bytes memory aEnc, Vote memory d) internal pure returns (bytes memory) {
-        return abi.encode(_reconstructB(aEnc, d));
+    // the CANONICAL path a contester uses TODAY to build full b: decode a, append X, re-encode.
+    // (Byte-for-byte identical to ContestFlow.t.sol's _append — the independent reference for test 1.)
+    function _canonicalFullB(bytes memory aEnc, bytes32 sid, uint8 opt) internal pure returns (bytes memory) {
+        Vote[] memory va = abi.decode(aEnc, (Vote[]));
+        Vote[] memory vb = new Vote[](va.length + 1);
+        for (uint256 i = 0; i < va.length; i++) vb[i] = va[i];
+        vb[va.length] = Vote({sourceId: sid, option: opt});
+        return abi.encode(vb);
     }
 
-    // ── 1. reconstruct-b is byte-identical to the old full b -> zero security cost ──
-    function test_reconstructB_equals_oldFullB() public view {
-        bytes memory reconstructed = abi.encode(_reconstructB(a, deltaX));
-        bytes memory oldFullB = _fullB(a, deltaX);
-        assertEq(keccak256(reconstructed), keccak256(oldFullB),
-            "constructing b from (a,delta) yields the exact b the old bundle passed");
+    // ── 1. reconstructed b is byte-identical to the CANONICAL current-path b → zero security cost,
+    //       classify digest unchanged, conformance vectors stay green (Damon's pin) ──
+    function test_reconstructB_byteIdentical_to_canonicalPath() public view {
+        bytes memory reconstructed = abi.encode(_reconstructB(a, deltaX));          // (a, delta) → b in-contract
+        bytes memory canonical     = _canonicalFullB(a, deltaX.sourceId, deltaX.option); // contester's b today
+        assertEq(reconstructed.length, canonical.length, "same byte length");
+        assertEq(keccak256(reconstructed), keccak256(canonical),
+            "reconstructed b is abi.encode(Vote[]) byte-identical to the current append-then-encode path");
     }
 
     // ── 2. (a, delta) calldata is smaller than (a, b) by ~|a| ──
     function test_delta_bundle_is_smaller_than_full_b() public {
         bytes memory deltaBundle = abi.encode(a, abi.encode(deltaX));   // (a, delta)
-        bytes memory fullBundle  = abi.encode(a, _fullB(a, deltaX));    // (a, b)
+        bytes memory fullBundle  = abi.encode(a, _canonicalFullB(a, deltaX.sourceId, deltaX.option));  // (a, b)
         assertLt(deltaBundle.length, fullBundle.length,
             "delta bundle drops the duplicated-a calldata");
         emit log_named_uint("(a,delta) bytes", deltaBundle.length);
