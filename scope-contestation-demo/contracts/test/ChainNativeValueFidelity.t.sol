@@ -92,8 +92,10 @@ contract ChainNativeValueFidelityTest is Test {
 
         bytes memory X = bytes("t1-X-extra");
         bytes32 xId    = keccak256(X);
-        bytes memory b = _append(aFake, xId, WIN);
-        bytes memory proof = abi.encode(aFake, b, abi.encode(_makeNI(ids, xId)));
+        // (a, delta) form: delta is X as a single Vote; contract reconstructs b = a ++ [X].
+        // Reverts at guard 3 (value fidelity) BEFORE guard 7, so X's chain reading is irrelevant here.
+        bytes memory proof =
+            abi.encode(aFake, abi.encode(Vote({sourceId: xId, option: WIN})), abi.encode(_makeNI(ids, xId)));
 
         vm.expectRevert(bytes("value fidelity: a does not reproduce the committed resolution"));
         pre.contest(scopeId, X, proof);
@@ -122,11 +124,49 @@ contract ChainNativeValueFidelityTest is Test {
         bytes memory a = abi.encode(real); // honest base = the actual chain readings
         bytes memory X = bytes("t1-hp-X");
         bytes32 xId    = keccak256(X);
-        bytes memory b = _append(a, xId, WIN); // X(WIN) tips 4/8=50%≥50% → WIN
-        bytes memory proof = abi.encode(a, b, abi.encode(_makeNI(ids, xId)));
+        chain.setValue(xId, PIN, WIN); // X's REAL chain reading -- guard 7 pins delta against it
+        // (a, delta): delta = X(WIN); contract reconstructs b = a ++ [X]. X(WIN) tips 4/8=50% -> WIN.
+        // guard 7 (type-1) recomputes valueAt(X, PIN) == WIN, then isolation collapses to X-not-in-a.
+        bytes memory proof =
+            abi.encode(a, abi.encode(Vote({sourceId: xId, option: WIN})), abi.encode(_makeNI(ids, xId)));
 
         bool separated = pre.contest(scopeId, X, proof);
         assertTrue(separated, "X material to THE chain-native resolution must separate");
+    }
+
+    // ── Non-material X: passes all four guards (incl. guard 7) but does NOT flip the verdict ──
+    // Real on-chain resolution is a robust 6-1 WIN. A genuine absent X(WIN) is authentic (guard 7
+    // passes) but classify(a)==classify(b)==WIN, so separated=false. This is the materiality leg
+    // that the type-2 suite can no longer demonstrate in-contract (it defers X-value at guard 7).
+    function test_type1_nonMaterialX_notSeparated() public {
+        string[7] memory names = ["t1-nm-1", "t1-nm-2", "t1-nm-3", "t1-nm-4", "t1-nm-5", "t1-nm-6", "t1-nm-7"];
+        uint8[7]  memory opts  = [WIN, WIN, WIN, WIN, WIN, WIN, LOSS]; // 6-1 -> robust WIN
+
+        Vote[] memory real = new Vote[](7);
+        bytes32[] memory ids = new bytes32[](7);
+        for (uint256 i = 0; i < 7; i++) {
+            ids[i]  = _id(names[i]);
+            real[i] = Vote({sourceId: ids[i], option: opts[i]});
+        }
+        ids = _sort(ids);
+        _seedChain(real);
+
+        bytes32 scopeId   = _id("t1-market-nm");
+        bytes32 scopeRoot = _bind(_root(ids), ids.length);
+        bytes memory params = abi.encode(uint256(7), uint256(5000));
+        pre.commitScope(scopeId, scopeRoot, params, clf);
+        res.commitChainSource(scopeId, chain, PIN);
+
+        bytes memory a = abi.encode(real);
+        bytes memory X = bytes("t1-nm-X");
+        bytes32 xId    = keccak256(X);
+        chain.setValue(xId, PIN, WIN); // X's honest reading -- guard 7 passes
+        // X(WIN) on a 6-1 WIN base stays WIN: authentic but NOT material.
+        bytes memory proof =
+            abi.encode(a, abi.encode(Vote({sourceId: xId, option: WIN})), abi.encode(_makeNI(ids, xId)));
+
+        bool separated = pre.contest(scopeId, X, proof);
+        assertFalse(separated, "authentic X that does not flip the verdict is not material");
     }
 
     function test_type1_commitResolution_reverts_useChainSource() public {
