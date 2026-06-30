@@ -197,7 +197,7 @@ contract CompletenessBondIntegrationTest is Test {
 
     // ───────────────────────────── TEST 3: immaterial stands (type-1) ─────────────────
     /// An authentic-but-immaterial omission passes guard 7 yet does NOT flip the verdict, so it does
-    /// NOT slash — the bond stands (sufficiency, Guarantee 1). X(DRAW) → 3-4-1/8 → still UNCERTAIN.
+    /// NOT slash — the bond stands (sufficiency, Guarantee 1). X(LOSS) → 3-3-2/8 → WIN/DRAW still tie at top → NO_QUORUM → not material.
     function test_integration_immaterialOmission_doesNotSlash_bondStands() public {
         (bytes32 scopeId, bytes32 scopeRoot, bytes memory a, bytes32[] memory ids) = _commitType1("int-immaterial");
         bytes32 bondId = bond.postBond{value: 1 ether}(scopeId, scopeRoot, 1 days);
@@ -216,7 +216,7 @@ contract CompletenessBondIntegrationTest is Test {
     // ───────────────────────────── TEST 4: NO-LOCKOUT (type-1) ────────────────────────
     /// THE property, by real separation. A failed (non-separating) challenge does NOT lock the bond
     /// against a later genuine material slash — on the real contest(), guard 7 included. Step 1: an
-    /// authentic immaterial X(DRAW) → separated=false → bond stands. Step 2: an authentic material
+    /// authentic immaterial X(LOSS) → separated=false → bond stands. Step 2: an authentic material
     /// X(WIN) on the SAME standing bond → separated=true → slash. Prior failure didn't pre-burn it.
     function test_integration_noLockout_failedThenMaterial_realContest() public {
         (bytes32 scopeId, bytes32 scopeRoot, bytes memory a, bytes32[] memory ids) = _commitType1("int-nolockout");
