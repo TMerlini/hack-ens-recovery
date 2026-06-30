@@ -2,37 +2,54 @@
 pragma solidity ^0.8.24;
 
 import "forge-std/Test.sol";
-import {ScopeContestation}    from "../src/ScopeContestation.sol";
-import {ResolutionCommitment} from "../src/ResolutionCommitment.sol";
-import {Layer2PreCheck}       from "../src/Layer2PreCheck.sol";
-import {MajorityClassifier}   from "../src/MajorityClassifier.sol";
-import {NIProof, Vote}        from "../src/ScopeTypes.sol";
+import {ScopeContestation}     from "../src/ScopeContestation.sol";
+import {ChainNativeResolution} from "../src/ChainNativeResolution.sol";
+import {ResolutionCommitment}  from "../src/ResolutionCommitment.sol";
+import {Layer2PreCheck}        from "../src/Layer2PreCheck.sol";
+import {MajorityClassifier}    from "../src/MajorityClassifier.sol";
+import {IChainReadings}        from "../src/IChainReadings.sol";
+import {NIProof, Vote}         from "../src/ScopeTypes.sol";
 import {CompletenessBond, IScopeRegistry, ILayer2PreCheck} from "../src/CompletenessBond.sol";
 
-/// @notice Layer-3 INTEGRATION suite - drives CompletenessBond against the REAL
-///         four-guard stack (ScopeContestation + Layer2PreCheck + MajorityClassifier
-///         + ResolutionCommitment), NO MockLayer2. This is the test the unit suite
-///         can't be: MockLayer2 returns `separated` on command and fakes scopeRootOf,
-///         so it proves the bond's branching but not the wiring. Here the slash verdict
-///         comes from the real contest() and the existence check from the real L1
-///         registry - so this is what actually proves:
+/// @notice A historical-addressable on-chain readings source (test double), mirrors the one in
+///         ChainNativeValueFidelity.t.sol. Values stored per (sourceId, block) so valueAt() is
+///         deterministic and guard 7 can recompute against it.
+contract MockChainReadings is IChainReadings {
+    mapping(bytes32 => mapping(uint256 => uint8)) private _v;
+    function setValue(bytes32 sourceId, uint256 blockNumber, uint8 option) external {
+        _v[sourceId][blockNumber] = option;
+    }
+    function valueAt(bytes32 sourceId, uint256 blockNumber) external view returns (uint8) {
+        return _v[sourceId][blockNumber];
+    }
+}
+
+/// @notice Layer-3 INTEGRATION suite — drives CompletenessBond against the REAL four-guard stack
+///         (ScopeContestation + Layer2PreCheck + MajorityClassifier + a real IResolutionCommitment),
+///         NO MockLayer2. This is the test the 15/15 unit suite can't be: MockLayer2 returns
+///         `separated` on command and fakes scopeRootOf, so it proves the bond's branching but not
+///         the wiring. Here the slash verdict comes from the real contest() and the existence check
+///         from the real L1 registry.
 ///
-///           1. the two-address wiring (Damon's e80fa5b integration fix): postBond
-///              existence is checked against the L1 scope registry, not layer2.
-///           2. a MATERIAL omission slashes through the real four guards.
-///           3. an IMMATERIAL omission does not slash - the bond stands (Guarantee 1).
-///           4. NO-LOCKOUT: a failed (non-separating) challenge does NOT lock the bond
-///              against a later genuine material slash. This is the property that rested
-///              on verifyScopeComplete pinning `a` - now exercised on the real contest().
-///
-///         Mirrors the proof-construction helpers from ContestFlow.t.sol (the 13/13
-///         real-proof suite) so the coordinates are genuine absent-X materiality proofs.
+///         POST-#8 NOTE (type-1 reseat + type-2 deferral, A+B per Fede):
+///         Under the (a, delta) + guard-7 wire, guard 7 recomputes X's value on type-1 and DEFERS
+///         on type-2 (returns false → revert). The bond's challenge → contest path inherits that.
+///         The bond mechanics (postBond/slash/bounty/no-lockout) consume the `separated` bool and are
+///         orthogonal to HOW it was derived — so the four bond properties are proven through a REAL
+///         type-1 contest() where in-contract separation is exercisable (A). The residual type-2
+///         question — that a deferred (reverting) bond challenge does not lock the committer or
+///         strand the challenger — is pinned by a clean-deferral test (B). no-lockout therefore holds
+///         for BOTH types: type-1 by real separation, type-2 by non-locking deferral. The richer
+///         "type-2 bond parks pending source-auth" behavior rides the source-auth leg, not this PR
+///         (same defer drawn on #8).
 contract CompletenessBondIntegrationTest is Test {
-    ScopeContestation    scope;
-    ResolutionCommitment res;
-    Layer2PreCheck       pre;
-    MajorityClassifier   clf;
-    CompletenessBond     bond;
+    ScopeContestation     scope;
+    ChainNativeResolution res;     // type-1 resolution (A tests)
+    Layer2PreCheck        pre;
+    MajorityClassifier    clf;
+    MockChainReadings     chain;
+    CompletenessBond      bond;
+    uint256               PIN;
 
     uint8 constant WIN  = 1;
     uint8 constant LOSS = 2;
@@ -40,17 +57,19 @@ contract CompletenessBondIntegrationTest is Test {
 
     function setUp() public {
         scope = new ScopeContestation();
-        res   = new ResolutionCommitment();
+        res   = new ChainNativeResolution();
         clf   = new MajorityClassifier();
         pre   = new Layer2PreCheck(scope, res);
-        // the two-address binding (e80fa5b): existence against L1, verdict against L2
+        chain = new MockChainReadings();
+        // the two-address binding: existence against L1, verdict against L2
         bond  = new CompletenessBond(IScopeRegistry(address(scope)), ILayer2PreCheck(address(pre)));
+        PIN   = block.number; // pinned, already-mined (pre-outcome) block
         vm.deal(address(this), 100 ether);
     }
 
     receive() external payable {} // accept the slashed bounty as challenger
 
-    // ───────────── proof helpers (mirror ContestFlow.t.sol / scope_ref.py) ─────────────
+    // ───────────── proof helpers (mirror ContestFlow.t.sol / ChainNativeValueFidelity.t.sol) ────────
     function _leaf(bytes32 id) internal pure returns (bytes32) { return keccak256(abi.encodePacked(bytes1(0x00), id)); }
     function _node(bytes32 l, bytes32 r) internal pure returns (bytes32) { return keccak256(abi.encodePacked(bytes1(0x01), l, r)); }
     function _bind(bytes32 root, uint256 count) internal pure returns (bytes32) { return keccak256(abi.encode(root, count)); }
@@ -100,51 +119,70 @@ contract CompletenessBondIntegrationTest is Test {
         }
         revert("present");
     }
-    function _market(string[4] memory names, uint8[4] memory opts) internal pure returns (bytes memory a, bytes32[] memory sortedIds) {
-        Vote[] memory va = new Vote[](4); bytes32[] memory ids = new bytes32[](4);
-        for (uint256 i = 0; i < 4; i++) { va[i] = Vote({sourceId: _id(names[i]), option: opts[i]}); ids[i] = _id(names[i]); }
-        a = abi.encode(va); sortedIds = _sort(ids);
+    function _delta(bytes32 xId, uint8 opt) internal pure returns (bytes memory) {
+        return abi.encode(Vote({sourceId: xId, option: opt}));
     }
-    function _append(bytes memory a, bytes32 xId, uint8 opt) internal pure returns (bytes memory) {
-        Vote[] memory va = abi.decode(a, (Vote[])); Vote[] memory vb = new Vote[](va.length + 1);
-        for (uint256 i = 0; i < va.length; i++) vb[i] = va[i];
-        vb[va.length] = Vote({sourceId: xId, option: opt}); return abi.encode(vb);
-    }
-    function _resRoot(bytes memory a) internal view returns (bytes32) { return res.computeResolutionRoot(abi.decode(a, (Vote[]))); }
 
-    /// Commit a market-1 style 2WIN-2LOSS scope (UNCERTAIN base under 60% quorum) and
-    /// return (scopeId, scopeRoot, a, sortedIds). Under this base: an absent X(DRAW) is
-    /// immaterial (stays UNCERTAIN), an absent X(LOSS) is material (→ LOSS).
-    function _commitTwoTwo(string memory tag) internal returns (bytes32 scopeId, bytes32 scopeRoot, bytes memory a, bytes32[] memory ids) {
-        (a, ids) = _market(["t-WIN-A", "t-WIN-B", "t-LOSS-C", "t-LOSS-D"], [WIN, WIN, LOSS, LOSS]);
+    // ──────────────────────── type-1 scope builder (mirrors ChainNativeValueFidelity) ───────────────
+    /// Commit a robust 6-1 WIN chain-native scope. Under a 50% quorum on a 6-1 WIN base:
+    ///   • an authentic absent X(WIN)  → stays WIN  → IMMATERIAL (authentic, guard 7 passes, no flip)
+    ///   • an authentic absent X(LOSS) → 6-2/8 = 75% WIN still → MATERIAL needs the 3-3-1 base, see below
+    /// To get a clean material/immaterial pair on the SAME committed scope (required for no-lockout),
+    /// we use a 3-3-1 UNCERTAIN base where:
+    ///   • authentic X(LOSS) → 3-3-2/8 → WIN/DRAW still tie at top → NO_QUORUM → IMMATERIAL
+    ///   • authentic X(WIN)  → 4-3-1/8 = 50% WIN sole top → flips NO_QUORUM→WIN → MATERIAL
+    /// Both X readings are seeded authentic so guard 7 passes; materiality is the only variable.
+    function _commitType1(string memory tag)
+        internal
+        returns (bytes32 scopeId, bytes32 scopeRoot, bytes memory a, bytes32[] memory ids)
+    {
+        string[7] memory names = [
+            string.concat(tag, "-1"), string.concat(tag, "-2"), string.concat(tag, "-3"),
+            string.concat(tag, "-4"), string.concat(tag, "-5"), string.concat(tag, "-6"),
+            string.concat(tag, "-7")
+        ];
+        uint8[7] memory opts = [WIN, WIN, WIN, DRAW, DRAW, DRAW, LOSS]; // 3-3-1 → UNCERTAIN base
+
+        Vote[] memory real = new Vote[](7);
+        ids = new bytes32[](7);
+        for (uint256 i = 0; i < 7; i++) {
+            ids[i]  = _id(names[i]);
+            real[i] = Vote({sourceId: ids[i], option: opts[i]});
+        }
+        ids = _sort(ids);
+        for (uint256 i = 0; i < real.length; i++) chain.setValue(real[i].sourceId, PIN, real[i].option);
+
         scopeId   = _id(tag);
         scopeRoot = _bind(_root(ids), ids.length);
-        pre.commitScope(scopeId, scopeRoot, abi.encode(uint256(4), uint256(6000)), clf);
-        pre.commitResolution(scopeId, _resRoot(a));
+        pre.commitScope(scopeId, scopeRoot, abi.encode(uint256(7), uint256(5000)), clf);
+        res.commitChainSource(scopeId, chain, PIN); // type-1 pre-outcome commit (no value root)
+        a = abi.encode(real); // honest base = the actual chain readings
     }
 
+    // ═══════════════════════════════════ A — TYPE-1 (real separation) ═══════════════════════════════
+
     // ───────────────────────────── TEST 1: wiring ─────────────────────────────────────
-    /// postBond existence is checked against the REAL L1 registry (Damon's e80fa5b fix).
+    /// postBond existence is checked against the REAL L1 registry.
     function test_integration_postBond_realScopeRegistry() public {
-        (bytes32 scopeId, bytes32 scopeRoot,,) = _commitTwoTwo("int-wiring");
+        (bytes32 scopeId, bytes32 scopeRoot,,) = _commitType1("int-wiring");
         bytes32 bondId = bond.postBond{value: 1 ether}(scopeId, scopeRoot, 1 days);
         (uint256 amount,,,, bool slashed,) = bond.survival(bondId);
         assertEq(amount, 1 ether, "live bond carries the staked bounty");
         assertFalse(slashed, "fresh bond is not slashed");
-        // an uncommitted scope must revert against the real registry (no mock to fake it)
         vm.expectRevert(bytes("scope not committed"));
         bond.postBond{value: 1 ether}(_id("never-committed"), scopeRoot, 1 days);
     }
 
-    // ───────────────────────────── TEST 2: material slash ─────────────────────────────
-    /// A material omission slashes through the real four guards; bounty pays the challenger.
+    // ───────────────────────────── TEST 2: material slash (type-1) ────────────────────
+    /// A material omission slashes through all four guards INCLUDING guard 7 (authentic X value);
+    /// bounty pays the challenger. X(WIN) on the 3-3-1 base → 4-3-1/8 = 50% WIN → flips → material.
     function test_integration_materialOmission_slashes_throughRealContest() public {
-        (bytes32 scopeId, bytes32 scopeRoot, bytes memory a, bytes32[] memory ids) = _commitTwoTwo("int-material");
+        (bytes32 scopeId, bytes32 scopeRoot, bytes memory a, bytes32[] memory ids) = _commitType1("int-material");
         bytes32 bondId = bond.postBond{value: 1 ether}(scopeId, scopeRoot, 1 days);
 
-        bytes memory X = bytes("t-LOSS-Xmat"); bytes32 xId = keccak256(X);
-        bytes memory b = _append(a, xId, LOSS); // 2WIN-3LOSS/5 = 60% LOSS → flips UNCERTAIN→LOSS
-        bytes memory proof = abi.encode(a, b, abi.encode(_makeNI(ids, xId)));
+        bytes memory X = bytes("int-material-X"); bytes32 xId = keccak256(X);
+        chain.setValue(xId, PIN, WIN);  // X's AUTHENTIC reading — guard 7 passes
+        bytes memory proof = abi.encode(a, _delta(xId, WIN), abi.encode(_makeNI(ids, xId)));
 
         uint256 balBefore = address(this).balance;
         bond.challenge(bondId, X, proof);
@@ -157,46 +195,99 @@ contract CompletenessBondIntegrationTest is Test {
         assertEq(address(this).balance, balBefore + 1 ether, "bounty pays the challenger");
     }
 
-    // ───────────────────────────── TEST 3: immaterial stands ──────────────────────────
-    /// An immaterial omission does NOT slash - the bond stands (sufficiency, Guarantee 1).
+    // ───────────────────────────── TEST 3: immaterial stands (type-1) ─────────────────
+    /// An authentic-but-immaterial omission passes guard 7 yet does NOT flip the verdict, so it does
+    /// NOT slash — the bond stands (sufficiency, Guarantee 1). X(DRAW) → 3-4-1/8 → still UNCERTAIN.
     function test_integration_immaterialOmission_doesNotSlash_bondStands() public {
-        (bytes32 scopeId, bytes32 scopeRoot, bytes memory a, bytes32[] memory ids) = _commitTwoTwo("int-immaterial");
+        (bytes32 scopeId, bytes32 scopeRoot, bytes memory a, bytes32[] memory ids) = _commitType1("int-immaterial");
         bytes32 bondId = bond.postBond{value: 1 ether}(scopeId, scopeRoot, 1 days);
 
-        bytes memory X = bytes("t-DRAW-Ximm"); bytes32 xId = keccak256(X);
-        bytes memory b = _append(a, xId, DRAW); // 2WIN-2LOSS-1DRAW/5 = no 60% → stays UNCERTAIN
-        bytes memory proof = abi.encode(a, b, abi.encode(_makeNI(ids, xId)));
+        bytes memory X = bytes("int-immaterial-X"); bytes32 xId = keccak256(X);
+        chain.setValue(xId, PIN, LOSS); // X's AUTHENTIC reading — guard 7 passes; 3-3-2 keeps the WIN/DRAW tie → NO_QUORUM → not material
+        bytes memory proof = abi.encode(a, _delta(xId, LOSS), abi.encode(_makeNI(ids, xId)));
 
         bond.challenge(bondId, X, proof);
 
         (,,, uint64 resolvedAt, bool slashed,) = bond.survival(bondId);
-        assertFalse(slashed,   "immaterial omission must not slash");
+        assertFalse(slashed,   "authentic-but-immaterial omission must not slash");
         assertEq(resolvedAt, 0, "bond stands - still live");
     }
 
-    // ───────────────────────────── TEST 4: NO-LOCKOUT ─────────────────────────────────
-    /// THE property. A failed (non-separating) challenge does NOT lock the bond against a
-    /// later genuine material slash - proven on the real contest(), not the mock. Step 1:
-    /// an immaterial X(DRAW) → separated=false → bond stands. Step 2: a material X(LOSS) on
-    /// the SAME standing bond → separated=true → slash. The prior failure didn't pre-burn it.
+    // ───────────────────────────── TEST 4: NO-LOCKOUT (type-1) ────────────────────────
+    /// THE property, by real separation. A failed (non-separating) challenge does NOT lock the bond
+    /// against a later genuine material slash — on the real contest(), guard 7 included. Step 1: an
+    /// authentic immaterial X(DRAW) → separated=false → bond stands. Step 2: an authentic material
+    /// X(WIN) on the SAME standing bond → separated=true → slash. Prior failure didn't pre-burn it.
     function test_integration_noLockout_failedThenMaterial_realContest() public {
-        (bytes32 scopeId, bytes32 scopeRoot, bytes memory a, bytes32[] memory ids) = _commitTwoTwo("int-nolockout");
+        (bytes32 scopeId, bytes32 scopeRoot, bytes memory a, bytes32[] memory ids) = _commitType1("int-nolockout");
         bytes32 bondId = bond.postBond{value: 1 ether}(scopeId, scopeRoot, 1 days);
 
-        // 1. immaterial challenge - bond must stand
-        bytes memory X1 = bytes("t-DRAW-X1"); bytes32 xId1 = keccak256(X1);
-        bytes memory b1 = _append(a, xId1, DRAW);
-        bond.challenge(bondId, X1, abi.encode(a, b1, abi.encode(_makeNI(ids, xId1))));
+        // 1. authentic immaterial challenge — bond must stand
+        bytes memory X1 = bytes("int-nolockout-X1"); bytes32 xId1 = keccak256(X1);
+        chain.setValue(xId1, PIN, LOSS);
+        bond.challenge(bondId, X1, abi.encode(a, _delta(xId1, LOSS), abi.encode(_makeNI(ids, xId1))));
         (,,, uint64 r1, bool s1,) = bond.survival(bondId);
         assertFalse(s1, "non-separating challenge must not slash");
         assertEq(r1, 0, "bond still live after a failed challenge");
 
-        // 2. material challenge on the SAME bond - must still slash (no lockout)
-        bytes memory X2 = bytes("t-LOSS-X2"); bytes32 xId2 = keccak256(X2);
-        bytes memory b2 = _append(a, xId2, LOSS);
-        bond.challenge(bondId, X2, abi.encode(a, b2, abi.encode(_makeNI(ids, xId2))));
+        // 2. authentic material challenge on the SAME bond — must still slash (no lockout)
+        bytes memory X2 = bytes("int-nolockout-X2"); bytes32 xId2 = keccak256(X2);
+        chain.setValue(xId2, PIN, WIN);
+        bond.challenge(bondId, X2, abi.encode(a, _delta(xId2, WIN), abi.encode(_makeNI(ids, xId2))));
         (,,, uint64 r2, bool s2,) = bond.survival(bondId);
         assertTrue(s2, "a prior failed challenge MUST NOT lock out a genuine material slash");
         assertGt(r2, 0, "bond resolved by the material challenge");
+    }
+
+    // ═══════════════════════════ B — TYPE-2 (clean, non-locking deferral) ════════════════════════════
+
+    // ───────────────────────────── TEST 5: type-2 deferral does not lock ──────────────
+    /// THE type-2 residual property. Under the guard-7 wire a type-2 (off-chain value) bond challenge
+    /// reverts at guard 7 (value can't be recomputed on-chain → defer to the source-auth leg). This
+    /// test pins that the revert is CLEAN: challenge() has no catch, so the whole tx reverts and NO
+    /// bond state is written. The committer is not locked (bond live, not slashed) and the challenger
+    /// strands nothing (their reverted tx mutated no state, kept their own funds). no-lockout holds for
+    /// type-2 by safe deferral. The richer "park pending source-auth" behavior is a future leg (#8 defer).
+    function test_integration_type2Challenge_defersCleanly_noLock() public {
+        // Stand up a parallel TYPE-2 stack (ResolutionCommitment) sharing the same L1 + classifier.
+        ResolutionCommitment res2 = new ResolutionCommitment();
+        Layer2PreCheck       pre2 = new Layer2PreCheck(scope, res2);
+        CompletenessBond     bond2 = new CompletenessBond(IScopeRegistry(address(scope)), ILayer2PreCheck(address(pre2)));
+
+        // Commit a 2WIN-2LOSS type-2 scope (committed-root resolution, no chain source).
+        string[4] memory names = ["t2-A", "t2-B", "t2-C", "t2-D"];
+        uint8[4]  memory opts  = [WIN, WIN, LOSS, LOSS];
+        Vote[] memory real = new Vote[](4);
+        bytes32[] memory ids = new bytes32[](4);
+        for (uint256 i = 0; i < 4; i++) { ids[i] = _id(names[i]); real[i] = Vote({sourceId: ids[i], option: opts[i]}); }
+        ids = _sort(ids);
+        bytes memory a = abi.encode(real);
+
+        bytes32 scopeId   = _id("int-type2-defer");
+        bytes32 scopeRoot = _bind(_root(ids), ids.length);
+        pre2.commitScope(scopeId, scopeRoot, abi.encode(uint256(4), uint256(6000)), clf);
+        pre2.commitResolution(scopeId, res2.computeResolutionRoot(real)); // type-2 committed root
+
+        bytes32 bondId = bond2.postBond{value: 1 ether}(scopeId, scopeRoot, 1 days);
+
+        // Snapshot pre-challenge bond state + challenger balance.
+        (uint256 amt0,,, uint64 r0, bool sl0,) = bond2.survival(bondId);
+        uint256 balBefore = address(this).balance;
+
+        // A type-2 bond challenge: even a would-be-material X(LOSS) cannot separate in-contract —
+        // guard 7 returns false for type-2 and reverts. Assert the revert is exactly the deferral.
+        bytes memory X = bytes("t2-X-LOSS"); bytes32 xId = keccak256(X);
+        bytes memory proof = abi.encode(a, _delta(xId, LOSS), abi.encode(_makeNI(ids, xId)));
+        vm.expectRevert(bytes("guard 7: X value does not reproduce committed reading"));
+        bond2.challenge(bondId, X, proof);
+
+        // CLEAN deferral: no bond state mutated, committer not locked, challenger stranded nothing.
+        (uint256 amt1,,, uint64 r1, bool sl1, bool ch1) = bond2.survival(bondId);
+        assertEq(amt1, amt0,   "amount unchanged by a deferred challenge");
+        assertEq(r1,  r0,      "bond not resolved by a deferred challenge - still live");
+        assertEq(sl1, sl0,     "bond not slashed by a deferred challenge");
+        assertFalse(ch1,       "deferred challenge does not mark challenged");
+        assertEq(r1, 0,        "committer not locked - bond remains live for a future source-auth challenge");
+        assertEq(address(this).balance, balBefore, "challenger strands nothing - reverted tx kept funds");
     }
 }
