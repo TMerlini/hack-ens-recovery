@@ -171,22 +171,33 @@ contract ContestFlowTest is Test {
     // pre.commitResolution() with the correct root so guard 3 passes, keeping the
     // focus of each test on the guard it was written to cover.
 
-    function test_contest_materialAbsentX_separates() public {
+    /// @notice Type-2 (merkle-resolution) DEFERS X's value to the orthogonal source-auth leg.
+    ///         Guard 7 (verifyCoordinateValue) returns false for a type-2 ResolutionCommitment
+    ///         by design — X (the omitted coordinate) is in NO commitment, so there is nothing
+    ///         on-chain to recompute its value against. A type-2 contest therefore reverts at
+    ///         guard 7: X's value authenticity must come through the source-auth / zkTLS leg,
+    ///         not be conflated with the resolution root. This is the adversarial-X closure for
+    ///         type-2 — a contester CANNOT pin X's value here, even a material one.
+    ///         The "X material -> separates" demonstration lives in the type-1 suite
+    ///         (ChainNativeValueFidelity), where X's value IS chain-recomputable at guard 7.
+    ///         MATERIAL X here: guard 7 gates before classify, so materiality is never reached.
+    function test_contest_type2_guard7_defersMaterialXValue_reverts() public {
         (bytes memory a, bytes32[] memory ids) =
             _market(["m1-WIN-A", "m1-WIN-B", "m1-LOSS-C", "m1-LOSS-D"], [WIN, WIN, LOSS, LOSS]);
         bytes32 scopeId   = _id("market-1");
         bytes32 scopeRoot = _bind(_root(ids), ids.length);
         bytes memory params = abi.encode(uint256(4), uint256(6000));
         pre.commitScope(scopeId, scopeRoot, params, clf);
-        pre.commitResolution(scopeId, _makeResolutionRoot(a)); // guard 3 passes
+        pre.commitResolution(scopeId, _makeResolutionRoot(a)); // guards 1-3 pass
 
         bytes memory X    = bytes("m1-LOSS-X");
         bytes32 xId       = keccak256(X);
-        bytes memory b    = _append(a, xId, LOSS);
-        bytes memory proof = abi.encode(a, b, abi.encode(_makeNI(ids, xId)));
+        // (a, delta): delta = X(LOSS) (material). Passes guards 1-3, then guard 7 defers.
+        bytes memory proof =
+            abi.encode(a, abi.encode(Vote({sourceId: xId, option: LOSS})), abi.encode(_makeNI(ids, xId)));
 
-        bool separated = pre.contest(scopeId, X, proof);
-        assertTrue(separated, "absent X that flips the verdict must be material");
+        vm.expectRevert(bytes("guard 7: X value does not reproduce committed reading"));
+        pre.contest(scopeId, X, proof);
     }
 
     function test_verifyAbsence_truncationAttack_rejected() public {
@@ -216,7 +227,12 @@ contract ContestFlowTest is Test {
         return _makeNI(ids, cc);
     }
 
-    function test_contest_nonMaterialAbsentX_notSeparated() public {
+    /// @notice Companion to the test above: the type-2 guard-7 deferral is INDEPENDENT of
+    ///         materiality. With a NON-material X (does not flip the verdict) the contest still
+    ///         reverts at guard 7, not at classify — proving guard 7 gates upstream of the
+    ///         materiality verdict, so a type-2 contest never reaches "separated true/false"
+    ///         in-contract regardless of whether X would have mattered.
+    function test_contest_type2_guard7_defersNonMaterialXValue_reverts() public {
         (bytes memory a, bytes32[] memory ids) =
             _market(["m3-WIN-A", "m3-WIN-B", "m3-WIN-C", "m3-LOSS-D"], [WIN, WIN, WIN, LOSS]);
         bytes32 scopeId   = _id("market-3");
@@ -227,14 +243,25 @@ contract ContestFlowTest is Test {
 
         bytes memory X = bytes("m3-LOSS-X");
         bytes32 xId   = keccak256(X);
-        bytes memory b = _append(a, xId, LOSS);
-        bytes memory proof = abi.encode(a, b, abi.encode(_makeNI(ids, xId)));
+        // (a, delta): delta = X(LOSS) (non-material). Still reverts at guard 7 (deferral), not classify.
+        bytes memory proof =
+            abi.encode(a, abi.encode(Vote({sourceId: xId, option: LOSS})), abi.encode(_makeNI(ids, xId)));
 
-        bool separated = pre.contest(scopeId, X, proof);
-        assertFalse(separated, "absent X that does not change the verdict is not material");
+        vm.expectRevert(bytes("guard 7: X value does not reproduce committed reading"));
+        pre.contest(scopeId, X, proof);
     }
 
-    function test_contest_isolationViolation_reverts() public {
+    /// @notice The (a, delta) form STRUCTURALLY ELIMINATES the old b-tampering isolation attack.
+    ///         Under the previous (a, b) form a contester passed a full `b` and could smuggle a
+    ///         tampered DECLARED vote into it (old test: vb[0].option flipped), caught by the
+    ///         positional isolation loop. Now contest() is passed only (a, delta): b is
+    ///         reconstructed in-contract as a ++ [delta], so every declared vote in b IS a's
+    ///         vote verbatim — there is no b to tamper. Whatever a contester puts as the second
+    ///         arg is decoded as the SINGLE appended coordinate X; it cannot touch the declared
+    ///         set. Isolation collapses to "X not already in a" (exercised in the type-1 suite,
+    ///         where guard 7 passes and guard 4 is reachable). For type-2 the contest reverts at
+    ///         guard 7 (X-value deferral) before guard 4 — so the attack surface is gone two ways.
+    function test_contest_type2_bTampering_structurallyEliminated() public {
         (bytes memory a, bytes32[] memory ids) =
             _market(["m1-WIN-A", "m1-WIN-B", "m1-LOSS-C", "m1-LOSS-D"], [WIN, WIN, LOSS, LOSS]);
         bytes32 scopeId   = _id("market-iso");
@@ -245,14 +272,12 @@ contract ContestFlowTest is Test {
 
         bytes memory X  = bytes("m1-LOSS-X");
         bytes32 xId     = keccak256(X);
-        Vote[] memory vb = new Vote[](5);
-        Vote[] memory va = abi.decode(a, (Vote[]));
-        for (uint256 i = 0; i < 4; i++) vb[i] = va[i];
-        vb[0].option = LOSS; // tamper a declared coordinate
-        vb[4] = Vote({sourceId: xId, option: LOSS});
-        bytes memory proof = abi.encode(a, abi.encode(vb), abi.encode(_makeNI(ids, xId)));
+        // The contester can ONLY supply the single delta; declared votes come from a verbatim.
+        // No tampered-b can be expressed. b = a ++ [X(LOSS)] is reconstructed in-contract.
+        bytes memory proof =
+            abi.encode(a, abi.encode(Vote({sourceId: xId, option: LOSS})), abi.encode(_makeNI(ids, xId)));
 
-        vm.expectRevert(bytes("isolation"));
+        vm.expectRevert(bytes("guard 7: X value does not reproduce committed reading"));
         pre.contest(scopeId, X, proof);
     }
 
@@ -273,8 +298,8 @@ contract ContestFlowTest is Test {
 
         bytes memory X  = bytes("m5-LOSS-X");
         bytes32 xId     = keccak256(X);
-        bytes memory b  = _append(aBad, xId, LOSS);
-        bytes memory proof = abi.encode(aBad, b, abi.encode(_makeNI(ids, xId)));
+        // (a, delta): delta = X as one Vote; reverts at guard 2 (scope incomplete) before guard 7.
+        bytes memory proof = abi.encode(aBad, abi.encode(Vote({sourceId: xId, option: LOSS})), abi.encode(_makeNI(ids, xId)));
 
         vm.expectRevert(bytes("scope incomplete"));
         pre.contest(scopeId, X, proof);
@@ -298,8 +323,8 @@ contract ContestFlowTest is Test {
 
         bytes memory X  = bytes("m6-LOSS-X");
         bytes32 xId     = keccak256(X);
-        bytes memory b  = _append(aBad, xId, LOSS);
-        bytes memory proof = abi.encode(aBad, b, abi.encode(_makeNI(ids, xId)));
+        // (a, delta): delta = X as one Vote; reverts at guard 2 (scope incomplete) before guard 7.
+        bytes memory proof = abi.encode(aBad, abi.encode(Vote({sourceId: xId, option: LOSS})), abi.encode(_makeNI(ids, xId)));
 
         vm.expectRevert(bytes("scope incomplete"));
         pre.contest(scopeId, X, proof);
@@ -362,8 +387,8 @@ contract ContestFlowTest is Test {
 
         bytes memory X   = bytes("vf-X-extra");
         bytes32 xId      = keccak256(X);
-        bytes memory b   = _append(aFake, xId, WIN);
-        bytes memory proof = abi.encode(aFake, b, abi.encode(_makeNI(ids, xId)));
+        // (a, delta): delta = X as one Vote; reverts at guard 3 (value fidelity) before guard 7.
+        bytes memory proof = abi.encode(aFake, abi.encode(Vote({sourceId: xId, option: WIN})), abi.encode(_makeNI(ids, xId)));
 
         vm.expectRevert(bytes("value fidelity: a does not reproduce the committed resolution"));
         pre.contest(scopeId, X, proof);
@@ -376,7 +401,14 @@ contract ContestFlowTest is Test {
     ///         readings, so guard 3 passes, and separated = true is a sound verdict:
     ///         X was material to THE resolution, not to a contester-chosen base.
 
-    function test_contest_valueFidelity_fullHappyPath_separates() public {
+    /// @notice Even an HONEST X-value cannot complete a type-2 contest in-contract: there is no
+    ///         on-chain reading to recompute X against, so guard 7 defers regardless. The honest
+    ///         base `a` passes guards 1-3 (it reproduces the committed resolution); the contest
+    ///         still reverts at guard 7. The materially-equivalent happy path that DOES separate
+    ///         is test_type1_valueFidelity_fullHappyPath_separates in the type-1 suite, where X's
+    ///         value is recomputable from the pinned chain source. This is the type-1/type-2 split:
+    ///         type-2 X-value rides the source-auth leg; type-1 X-value rides guard 7.
+    function test_contest_type2_guard7_defersHonestXValue_reverts() public {
         // Real resolution: genuine 3-3-1 split (UNCERTAIN under 50% quorum).
         // 7 declared sources, quorum 5000 bps (50%).
         string[7] memory names = ["hp-S1", "hp-S2", "hp-S3", "hp-S4", "hp-S5", "hp-S6", "hp-S7"];
@@ -401,11 +433,12 @@ contract ContestFlowTest is Test {
 
         bytes memory X  = bytes("hp-X-extra");
         bytes32 xId     = keccak256(X);
-        bytes memory b  = _append(a, xId, WIN); // X(WIN) tips 4/8=50%≥50% → WIN
-        bytes memory proof = abi.encode(a, b, abi.encode(_makeNI(ids, xId)));
+        // (a, delta): delta = X(WIN), the honest reading. Passes guards 1-3, defers at guard 7.
+        bytes memory proof =
+            abi.encode(a, abi.encode(Vote({sourceId: xId, option: WIN})), abi.encode(_makeNI(ids, xId)));
 
-        bool separated = pre.contest(scopeId, X, proof);
-        assertTrue(separated, "X that changes the verdict from UNCERTAIN to WIN must be material");
+        vm.expectRevert(bytes("guard 7: X value does not reproduce committed reading"));
+        pre.contest(scopeId, X, proof);
     }
 
     /// @notice Test 10 — the value-commitment is bound to the FULL declared scope
@@ -433,10 +466,10 @@ contract ContestFlowTest is Test {
         // Honest contester: a is the full declared set (required by verifyScopeComplete).
         bytes memory X  = bytes("vb-X");
         bytes32 xId     = keccak256(X);
-        bytes memory b  = _append(a, xId, LOSS);
-        bytes memory proof = abi.encode(a, b, abi.encode(_makeNI(ids, xId)));
+        // (a, delta): delta = X as one Vote; reverts at guard 3 (value fidelity) before guard 7.
+        bytes memory proof = abi.encode(a, abi.encode(Vote({sourceId: xId, option: LOSS})), abi.encode(_makeNI(ids, xId)));
 
-        // 4-leaf recompute ≠ committed 3-leaf root → the coord absent from the value
+        // 4-leaf recompute != committed 3-leaf root -> the coord absent from the value
         // commitment can't slip through with an unconstrained value; the contest reverts.
         vm.expectRevert(bytes("value fidelity: a does not reproduce the committed resolution"));
         pre.contest(scopeId, X, proof);

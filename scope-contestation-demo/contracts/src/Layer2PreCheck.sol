@@ -117,12 +117,22 @@ contract Layer2PreCheck {
         Market memory m = _markets[scopeId];
         require(m.exists, "no market");
 
-        (bytes memory a, bytes memory b, bytes memory verifyAbsenceProof) =
+        // (a, delta) form: delta is the single contested coordinate X as one abi-encoded
+        // Vote. b is reconstructed in-contract as a ++ [delta] — byte-identical to the old
+        // passed-b (proven byte-for-byte in DeltaIsolationGuard7.t.sol), so the classify
+        // digest is unchanged and conformance vectors stay green. Saves ~|a| calldata.
+        (bytes memory a, bytes memory deltaEnc, bytes memory verifyAbsenceProof) =
             abi.decode(proof, (bytes, bytes, bytes));
+        Vote memory delta = abi.decode(deltaEnc, (Vote));
+        bytes memory b = abi.encode(_reconstructB(a, delta));
 
         // Derive coordinateHash ONCE — passed to both verifyAbsence and classify so
         // the cross-layer "same coordinate" invariant is structural, not a convention.
         bytes32 coordinateHash = keccak256(nominatedCoordinate);
+
+        // The reconstructed coordinate MUST be the one proven absent, or a contester could
+        // isolate a different coordinate than the one verifyAbsence cleared.
+        require(delta.sourceId == coordinateHash, "delta != nominated coordinate");
 
         // GUARD 1 — verifyAbsence: X is absent from the committed cardinality-bound scope.
         require(
@@ -147,8 +157,19 @@ contract Layer2PreCheck {
             "value fidelity: a does not reproduce the committed resolution"
         );
 
-        // GUARD 4 — isolation: b = a + exactly X (no other coordinate differs).
-        require(_isolated(a, b, coordinateHash), "isolation");
+        // GUARD 7 — adversarial-X: X's value must reproduce its real committed reading.
+        // X is not in `a`, so it cannot ride guard 3; pin it independently on the delta.
+        // type-1 recomputes from the pinned chain source; type-2 returns false (X-value is
+        // the orthogonal source-auth leg, deferred). delta.option is abi.encode'd as the value.
+        require(
+            resolution.verifyCoordinateValue(scopeId, delta.sourceId, abi.encode(delta.option)),
+            "guard 7: X value does not reproduce committed reading"
+        );
+
+        // GUARD 4 — isolation collapses to X ∉ a: b is reconstructed as a ++ [X] in
+        // contract, so length (n+1) and positional equality hold BY CONSTRUCTION. The only
+        // structural fact left is that X was not already in a.
+        require(_xNotInA(a, coordinateHash), "isolation: X already in a");
 
         // classify: run w(a) vs w(b) — the only thing that touches classification.
         bytes32 digest;
@@ -160,15 +181,25 @@ contract Layer2PreCheck {
 
     /// @dev Reference isolation: b appends exactly one vote whose sourceId == X;
     ///      all declared votes in b match a exactly; X is not in a.
-    function _isolated(bytes memory a, bytes memory b, bytes32 x) private pure returns (bool) {
+    /// @dev Reconstruct b = a ++ [delta]. Byte-identical to the canonical contester
+    ///      append-then-encode path (proven in DeltaIsolationGuard7.t.sol), so
+    ///      abi.encode(b) feeds classify with an unchanged digest.
+    function _reconstructB(bytes memory a, Vote memory delta)
+        private pure returns (Vote[] memory b)
+    {
         Vote[] memory va = abi.decode(a, (Vote[]));
-        Vote[] memory vb = abi.decode(b, (Vote[]));
-        if (vb.length != va.length + 1) return false;
+        b = new Vote[](va.length + 1);
+        for (uint256 i = 0; i < va.length; i++) b[i] = va[i];
+        b[va.length] = delta;
+    }
+
+    /// @dev The only structural isolation fact left once b is reconstructed: X not in a.
+    function _xNotInA(bytes memory a, bytes32 x) private pure returns (bool) {
+        Vote[] memory va = abi.decode(a, (Vote[]));
         for (uint256 i = 0; i < va.length; i++) {
-            if (vb[i].sourceId != va[i].sourceId || vb[i].option != va[i].option) return false;
-            if (va[i].sourceId == x) return false; // X must not already be in a
+            if (va[i].sourceId == x) return false;
         }
-        return vb[va.length].sourceId == x;
+        return true;
     }
 
     /// @dev Extract sourceIds from a Vote[] encoding for the scope-completeness guard.
