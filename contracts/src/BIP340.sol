@@ -34,9 +34,18 @@ library BIP340 {
     bytes32 internal constant CHALLENGE_TAG_HASH =
         0x7bb52d7a9fef58323eb1bf7a407db382d2f3f2d81bb1224f49fe518f6d48d37c;
 
-    /// @notice Verify BIP-340 signature `(rx, s)` over message `m` under x-only pubkey `px`. Never reverts
-    ///         for malformed inputs — returns false instead. View (uses ecrecover + modexp precompiles).
-    function verify(bytes32 px, bytes32 rx, bytes32 s, bytes32 m) internal view returns (bool) {
+    /// @notice Verify BIP-340 signature `(rx, s)` over `m` under x-only pubkey `px`, given the y-coordinate
+    ///         `ry` of R as an off-chain WITNESS. The contract does NOT compute a square root — it only
+    ///         checks `ry² ≡ rx³+7 (mod p)` (a single `mulmod`), which is sound because the caller cannot
+    ///         profit from a wrong `ry`: any `ry` failing that check is rejected, and the only value passing
+    ///         it (after the even-Y lift) is the true lift of `rx`. This removes the `modexp` precompile call
+    ///         from the hot path (~1k+ gas + precompile overhead per verify). Never reverts — returns false.
+    ///         (Gas finding by Max Wickham, routed via crysol's maintainer — 2026-07.)
+    function verify(bytes32 px, bytes32 rx, bytes32 s, bytes32 m, bytes32 ryWitness)
+        internal
+        view
+        returns (bool)
+    {
         uint256 pxu = uint256(px);
         uint256 rxu = uint256(rx);
         uint256 su  = uint256(s);
@@ -60,14 +69,36 @@ library BIP340 {
         address recovered = ecrecover(bytes32(sp), 27, px, bytes32(ep));
         if (recovered == address(0)) return false;
 
-        // Expected address of R = the even-Y point at x = rx.
+        // Expected address of R = the even-Y point at x = rx. Instead of computing √(rx³+7) on-chain,
+        // verify the supplied witness IS a root, then lift it to even Y (BIP-340).
+        uint256 ry = uint256(ryWitness);
+        if (ry >= P) return false;
         uint256 y2 = addmod(mulmod(mulmod(rxu, rxu, P), rxu, P), 7, P); // rx³ + 7
-        uint256 ry = _modexp(y2, P14, P);                              // candidate √
-        if (mulmod(ry, ry, P) != y2) return false;                    // rx is not a curve x-coord
-        if (ry & 1 == 1) ry = P - ry;                                 // BIP-340: lift to even Y
+        if (mulmod(ry, ry, P) != y2) return false;                     // witness is not √(rx³+7) ⇒ reject
+        if (ry & 1 == 1) ry = P - ry;                                  // BIP-340: lift to even Y
 
         address expected = address(uint160(uint256(keccak256(abi.encodePacked(rx, bytes32(ry))))));
         return recovered == expected;
+    }
+
+    /// @notice Convenience overload that derives `ry` on-chain via the `modexp` precompile (the pre-witness
+    ///         behaviour). Kept for callers/tests without a precomputed witness; the escrow/verifier hot path
+    ///         uses the 5-arg witness form above. Same result, higher gas. Never reverts — returns false.
+    function verify(bytes32 px, bytes32 rx, bytes32 s, bytes32 m) internal view returns (bool) {
+        (bool ok, uint256 ry) = _liftXEvenY(uint256(rx));
+        if (!ok) return false;
+        return verify(px, rx, s, m, bytes32(ry));
+    }
+
+    /// @dev even-Y lift of x on secp256k1: y = √(x³+7) mod p (p ≡ 3 mod 4 ⇒ y = (x³+7)^((p+1)/4)), then to
+    ///      even Y. Returns (false,0) if x is out of range or not a curve x-coordinate. Uses `modexp`.
+    function _liftXEvenY(uint256 rxu) private view returns (bool, uint256) {
+        if (rxu == 0 || rxu >= P) return (false, 0);
+        uint256 y2 = addmod(mulmod(mulmod(rxu, rxu, P), rxu, P), 7, P); // rx³ + 7
+        uint256 ry = _modexp(y2, P14, P);                              // candidate √
+        if (mulmod(ry, ry, P) != y2) return (false, 0);               // rx is not a curve x-coord
+        if (ry & 1 == 1) ry = P - ry;                                 // even Y
+        return (true, ry);
     }
 
     /// @dev base^power mod m via the 0x05 modexp precompile (all operands 32 bytes).

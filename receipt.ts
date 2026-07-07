@@ -18,6 +18,7 @@ import {
   PROOF_KIND,
   type PublishResult,
 } from "@trustless-ai/agent-sdk";
+import { AbiCoder, getBytes } from "ethers";
 
 export const JUDGMENT_TYPE = "recovery_receipt";
 export const SCHEMA = "trustless-ai.commit.v0";
@@ -110,17 +111,46 @@ export async function publishCommit(
   });
 }
 
+const SECP256K1_P = 0xFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFEFFFFFC2Fn;
+// artifact_hash marker as it appears in the serialized (escaped) content: \"artifact_hash\":\"
+const ARTIFACT_MARKER = Buffer.from('\\"artifact_hash\\":\\"', "utf8");
+
+function modPow(base: bigint, exp: bigint, mod: bigint): bigint {
+  base %= mod;
+  let r = 1n;
+  while (exp > 0n) {
+    if (exp & 1n) r = (r * base) % mod;
+    base = (base * base) % mod;
+    exp >>= 1n;
+  }
+  return r;
+}
+
+/** even-Y lift of x on secp256k1: y = √(x³+7) mod p (p ≡ 3 mod 4), chosen even (BIP-340). */
+function liftXEvenY(rx: string): string {
+  const x = BigInt(rx);
+  const y2 = (modPow(x, 3n, SECP256K1_P) + 7n) % SECP256K1_P;
+  let y = modPow(y2, (SECP256K1_P + 1n) / 4n, SECP256K1_P);
+  if ((y * y) % SECP256K1_P !== y2) throw new Error("liftXEvenY: rx is not a valid curve x-coordinate");
+  if (y & 1n) y = SECP256K1_P - y;
+  return "0x" + y.toString(16).padStart(64, "0");
+}
+
 /**
  * buildReceiptProof — pack the SIGNED kind-30078 commit into the `receiptProof` bytes that
  * `RecoveryEscrow.release(expectArtifactHash, receiptProof)` forwards to `BIP340Verifier.verify()`.
  *
- * Same anti-drift discipline as `normalizeSpec`: the SDK's `packReceiptProof()` lays out
- * `abi.encode(px, rx, s, preimage)` exactly as the on-chain verifier decodes it, so off-chain
- * `verifyFullFlow()` and on-chain `verify()` consume byte-identical input. The event must be signed
- * (the contract checks the BIP-340 sig over `sha256(preimage)`); `commitPreAction` returns it UNSIGNED.
+ * Layout: `abi.encode(px, rx, s, ry, contentOffset, preimage)`, byte-identical to what the on-chain
+ * verifier decodes (same anti-drift discipline as `normalizeSpec`). The SDK's `packReceiptProof()` supplies
+ * `(px, rx, s, preimage)`; this wrapper adds two witnesses the verifier CHECKS (never trusts) so it can
+ * skip expensive on-chain work — per Max Wickham's 2026-07 review (see BIP340.sol / BIP340Verifier.sol):
+ *   - `ry`            : even-Y coord of R lifted from `rx`. Contract verifies `ry² ≡ rx³+7 (mod p)` instead
+ *                       of computing the sqrt via the `modexp` precompile every call (gas).
+ *   - `contentOffset` : exact index of the `artifact_hash` marker in the preimage. Contract checks the
+ *                       marker sits there instead of scanning for a first match (parsing-ambiguity fix).
  *
- * Release flow: commitPreAction → sign → publishCommit (anchor) → buildReceiptProof → submit to
- * escrow.release(receipt.artifact_hash, proof). Owner-binding + delivery + nullifier are enforced on-chain.
+ * The event must be signed (the contract checks the BIP-340 sig over `sha256(preimage)`); `commitPreAction`
+ * returns it UNSIGNED. Release flow: commitPreAction → sign → publishCommit → buildReceiptProof → escrow.release.
  */
 export function buildReceiptProof(receipt: RecoveryReceipt): string {
   if (!receipt.event) {
@@ -129,5 +159,14 @@ export function buildReceiptProof(receipt: RecoveryReceipt): string {
   if (!receipt.event.sig) {
     throw new Error("buildReceiptProof: event is unsigned — sign the kind-30078 event before packing (the contract verifies the signature).");
   }
-  return sdkPackReceiptProof(receipt.event);
+  const coder = AbiCoder.defaultAbiCoder();
+  const [px, rx, s, preimage] =
+    coder.decode(["bytes32", "bytes32", "bytes32", "bytes"], sdkPackReceiptProof(receipt.event));
+  const ry = liftXEvenY(rx);
+  const contentOffset = Buffer.from(getBytes(preimage)).indexOf(ARTIFACT_MARKER);
+  if (contentOffset < 0) throw new Error("buildReceiptProof: artifact_hash marker not found in the signed preimage");
+  return coder.encode(
+    ["bytes32", "bytes32", "bytes32", "bytes32", "uint256", "bytes"],
+    [px, rx, s, ry, contentOffset, preimage],
+  );
 }

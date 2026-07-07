@@ -15,10 +15,10 @@ On release it **nullifies** `expectArtifactHash` (mark-spent) so a replayed rece
 ## Layout
 - `src/RecoveryEscrow.sol` — escrow: `openJob` (fund) · `release` (permissionless, gated) · `refund` (requester, after expiry) · nullifier.
 - `src/IReceiptVerifier.sol` — the `valid` + artifact-match seam.
-- `src/BIP340.sol` — on-chain BIP-340 (secp256k1 Schnorr) verify via the `ecrecover` trick (~7.5k gas, native precompiles only). **Crypto-critical — get an independent review before mainnet value flows through it.**
-- `src/BIP340Verifier.sol` — `IReceiptVerifier` impl A: decodes `receiptProof = abi.encode(px,rx,s,preimage)`, checks the sig over `sha256(preimage)`, pins the issuer key, extracts `artifact_hash` from the *signed* preimage.
+- `src/BIP340.sol` — on-chain BIP-340 (secp256k1 Schnorr) verify via the `ecrecover` trick (~7.5k gas, native precompiles only). Takes the R y-coordinate as a verified off-chain witness (`ry² ≡ rx³+7`), so the hot path skips the `modexp` sqrt; a 4-arg overload keeps the modexp path for witness-less callers. **Crypto-critical — get an independent review before mainnet value flows through it.**
+- `src/BIP340Verifier.sol` — `IReceiptVerifier` impl A: decodes `receiptProof = abi.encode(px,rx,s,ry,contentOffset,preimage)`, checks the sig over `sha256(preimage)`, pins the issuer key, and extracts `artifact_hash` from the *signed* preimage by verifying the marker sits at the exact `contentOffset` (no first-match scan).
 - `script/Deploy.s.sol` — `BIP340Verifier(issuer) → RecoveryEscrow(verifier)`.
-- `test/` — **24 tests green**: escrow (10, incl. `test_release_neverOnValidAlone`), BIP340 (7, real noble vector), BIP340Verifier (6, real SDK-signed receipt), Deploy wiring (1).
+- `test/` — **26 tests green**: escrow (10, incl. `test_release_neverOnValidAlone`), BIP340 (7, real noble vector), BIP340Verifier (8, real SDK-signed receipt — incl. wrong-offset and wrong-`ry`-witness regression tests), Deploy wiring (1).
 
 ## Build / test
 ```bash
